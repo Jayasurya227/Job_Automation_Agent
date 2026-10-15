@@ -1,0 +1,27 @@
+{
+  "include": [
+    "backend"
+  ],
+  "exclude": [
+    "**/node_modules",
+    "**/__pycache__",
+    "backend/venv",
+    "backend/scratch"
+  ],
+  "extraPaths": [
+    "./backend",
+    "./backend/venv/Lib/site-packages",
+    "C:/Users/jaswa/AppData/Roaming/Python/Python312/site-packages",
+    "C:/Program Files/Python312/Lib/site-packages"
+  ],
+  "venvPath": "backend",
+  "venv": "venv",
+  "reportMissingImports": "none",
+  "reportAttributeAccessIssue": "none",
+  "reportArgumentType": "none",
+  "reportOptionalMemberAccess": "none",
+  "reportGeneralTypeIssues": "none",
+  "typeCheckingMode": "off",
+  "pythonVersion": "3.12",
+  "pythonPlatform": "Windows"
+}

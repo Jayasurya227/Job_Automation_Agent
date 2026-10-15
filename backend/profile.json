@@ -1,0 +1,176 @@
+{
+  "personal_info": {
+    "name": "Rayavaram Jayasurya",
+    "email": "rayavaramjayasurya@gmail.com",
+    "phone": "9912565635",
+    "location": "Hyderabad,Telangana",
+    "linkedin_url": "https://www.linkedin.com/in/jayasurya-rayavaram-8074582a3",
+    "github_url": "https://github.com/Jayasurya227",
+    "portfolio_url": ""
+  },
+  "preferences": {
+    "target_roles": [
+      "Junior AI Engineer",
+      "AI Engineer",
+      "Full Stack Developer",
+      "Python Developer"
+    ],
+    "preferred_locations": [
+      "Hyderabad",
+      "Bengaluru",
+      "Remote",
+      "Hybrid",
+      "Chennai"
+    ],
+    "work_modes": [
+      "Remote",
+      "Hybrid",
+      "Onsite"
+    ],
+    "min_expected_salary": "Negotiable / Standard Industry CTC",
+    "notice_period_days": 0
+  },
+  "technical_skills": {
+    "programming_languages": [
+      "Python",
+      "SQL"
+    ],
+    "frameworks_and_libraries": [
+      "Next.js",
+      "TypeScript",
+      "LangChain",
+      "LangGraph",
+      "Hugging Face",
+      "OpenCV",
+      "NumPy",
+      "Pillow",
+      "BeautifulSoup"
+    ],
+    "ai_and_ml": [
+      "Machine Learning",
+      "Deep Learning",
+      "NLP",
+      "Computer Vision",
+      "Prompt Engineering",
+      "AI Agents",
+      "LLMs",
+      "RAG",
+      "OpenAI API",
+      "Gemini API",
+      "Anthropic API",
+      "FAISS",
+      "ChromaDB",
+      "Pinecone",
+      "Vector Embeddings",
+      "Whisper",
+      "EasyOCR"
+    ],
+    "databases": [
+      "Firebase"
+    ],
+    "tools_and_platforms": [
+      "Playwright",
+      "Vercel",
+      "Render",
+      "Git",
+      "GitHub",
+      "VS Code",
+      "Jupyter",
+      "Google Colab",
+      "Cursor",
+      "Antigravity",
+      "FFmpeg"
+    ]
+  },
+  "experience": [
+    {
+      "role": "Junior Artificial Intelligence (AI) Engineer",
+      "company": "Vitainspire Private Limited",
+      "location": "Hyderabad, Telangana",
+      "start_date": "01/2026",
+      "end_date": "09/2026",
+      "is_current": false,
+      "highlights": [
+        "Architected an end-to-end multimodal Video RAG pipeline using temporal chunking, embeddings, vector search, and LLM-based retrieval to enable timestamp-aware semantic search and Q&A across long-form instructional videos",
+        "Engineered OCR pipelines for Indian handwritten and printed prescriptions, combining image preprocessing, open-source OCR, and vision models to extract complex medical text into structured machine-readable data",
+        "Designed and deployed a production healthcare NGO website end-to-end, covering frontend development, backend integration, AI-powered automation, payment integration, and cloud deployment",
+        "Built an autonomous Python agentic data synchronization pipeline that extracts live healthcare and organizational metrics from the core management platform and synchronizes them with Firebase Firestore, eliminating recurring manual updates",
+        "Developed a RAG-powered conversational chatbot with a dynamically synchronized knowledge base, enabling context-grounded responses based on continuously updated organizational information",
+        "Collaborated on AI architecture, model development, intelligent automation, and production deployment across multiple real-world AI/GenAI initiatives."
+      ]
+    }
+  ],
+  "projects": [
+    {
+      "title": "AI-Powered Healthcare NGO Website",
+      "tech_stack": [
+        "Next.js",
+        "TypeScript",
+        "Firebase",
+        "Python",
+        "Playwright"
+      ],
+      "description": "Designed and shipped a production-grade NGO web platform - UI prototyped on Dribbble & Sketch, built with Next.js & TypeScript, live on Google with real user traffic",
+      "key_achievements": [
+        "Engineered a Python agentic pipeline that autonomously extracts 16 healthcare KPIs and syncs them to Firestore in real-time - eliminating manual updates entirely",
+        "Delivered the full system solo-to-production - covering UI design, AI architecture, backend automation, and cloud deployment as a unified end-to-end solution"
+      ],
+      "live_url": "",
+      "github_url": ""
+    },
+    {
+      "title": "Video RAG",
+      "tech_stack": [
+        "Python",
+        "EasyOCR",
+        "Gemini API",
+        "FAISS",
+        "FFmpeg",
+        "Whisper-Large Turbo Model",
+        "Vector Embeddings"
+      ],
+      "description": "Built a multimodal RAG system that processes long-form instructional videos into timestamp-indexed knowledge chunks for semantic retrieval",
+      "key_achievements": [
+        "Powered an LLM-driven Q&A interface on top of retrieved video segments - returning precise, timestamp-accurate answers grounded in actual video content"
+      ],
+      "live_url": "",
+      "github_url": ""
+    },
+    {
+      "title": "MedScript OCR \u2014 Indian Prescription Digitizer",
+      "tech_stack": [
+        "Python",
+        "OpenCV",
+        "Open-Source OCR & Vision Models",
+        "NumPy",
+        "Pillow"
+      ],
+      "description": "Built an OCR pipeline using open-source OCR and vision models to digitize Indian medical prescriptions \u2014 both printed and Indian doctors' handwritten scripts across varied regional styles",
+      "key_achievements": [
+        "Processed raw prescription images through a structured pipeline, outputting clean, structured data formats ready for healthcare data storage and downstream use"
+      ],
+      "live_url": "",
+      "github_url": ""
+    }
+  ],
+  "education": [
+    {
+      "degree": "Bachelor of Technology",
+      "field_of_study": "CSE - Data Science",
+      "institution": "Madanapalli institute of technology and science",
+      "graduation_year": 2026
+    }
+  ],
+  "application_answers": {
+    "immediate_joiner": true,
+    "willing_to_relocate": true,
+    "years_of_experience": 0.8,
+    "work_authorization": "Authorized to work in India (Citizen)",
+    "custom_qa": {
+      "notice_period": "Immediate (0 days)",
+      "expected_ctc": "Negotiable / As per company standards",
+      "current_location": "India",
+      "preferred_work_mode": "Remote / Hybrid / Onsite"
+    }
+  }
+}
