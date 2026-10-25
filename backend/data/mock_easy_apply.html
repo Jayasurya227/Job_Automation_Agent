@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Mock Easy Apply Portal</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0d1117;
+      color: #c9d1d9;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      margin: 0;
+    }
+    .modal {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 12px;
+      width: 540px;
+      padding: 24px;
+      box-shadow: 0 16px 32px rgba(0,0,0,0.4);
+    }
+    .modal-header {
+      border-bottom: 1px solid #30363d;
+      padding-bottom: 16px;
+      margin-bottom: 20px;
+    }
+    .modal-header h2 {
+      margin: 0 0 6px 0;
+      color: #58a6ff;
+      font-size: 20px;
+    }
+    .modal-header p {
+      margin: 0;
+      color: #8b949e;
+      font-size: 13px;
+    }
+    .step-indicator {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 20px;
+      font-size: 12px;
+      color: #8b949e;
+    }
+    .step-indicator .active {
+      color: #388bfd;
+      font-weight: 600;
+    }
+    .step-indicator .completed {
+      color: #3fb950;
+    }
+    .form-group {
+      margin-bottom: 16px;
+    }
+    label {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      color: #c9d1d9;
+    }
+    input[type="text"], input[type="email"], input[type="tel"], select, textarea {
+      width: 100%;
+      padding: 10px 12px;
+      background: #0d1117;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      color: #fff;
+      font-size: 14px;
+      box-sizing: border-box;
+    }
+    input:focus, select:focus, textarea:focus {
+      outline: none;
+      border-color: #58a6ff;
+    }
+    .radio-group {
+      display: flex;
+      gap: 16px;
+      margin-top: 6px;
+    }
+    .radio-label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .btn-group {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 24px;
+      padding-top: 16px;
+      border-top: 1px solid #30363d;
+    }
+    button {
+      padding: 10px 20px;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+    }
+    .btn-secondary {
+      background: #21262d;
+      color: #c9d1d9;
+    }
+    .btn-primary {
+      background: #238636;
+      color: #fff;
+    }
+    .btn-primary:hover {
+      background: #2ea043;
+    }
+    .step-section {
+      display: none;
+    }
+    .step-section.active {
+      display: block;
+    }
+    #confirmation-screen {
+      text-align: center;
+      padding: 30px 10px;
+    }
+    .success-icon {
+      font-size: 48px;
+      color: #3fb950;
+      margin-bottom: 12px;
+    }
+    .review-summary {
+      background: #0d1117;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 16px;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+    .review-summary div {
+      margin-bottom: 6px;
+    }
+  </style>
+</head>
+<body>
+  <div class="modal" id="easy-apply-modal">
+    <div class="modal-header">
+      <h2 id="modal-role-title">Apply to NextGen AI Labs</h2>
+      <p id="modal-role-sub">Junior AI Engineer &bull; Remote</p>
+    </div>
+
+    <div class="step-indicator">
+      <span id="badge-step-1" class="active">1. Contact Info</span>
+      <span id="badge-step-2">2. Screening & Resume</span>
+      <span id="badge-step-3">3. Review & Submit</span>
+    </div>
+
+    <!-- STEP 1: Contact Information -->
+    <div id="step-1" class="step-section active">
+      <div class="form-group">
+        <label for="full_name">Full Name *</label>
+        <input type="text" id="full_name" name="full_name" placeholder="Enter your full name" required>
+      </div>
+      <div class="form-group">
+        <label for="email">Email Address *</label>
+        <input type="email" id="email" name="email" placeholder="name@example.com" required>
+      </div>
+      <div class="form-group">
+        <label for="phone">Phone Number *</label>
+        <input type="tel" id="phone" name="phone" placeholder="+91 9876543210" required>
+      </div>
+      <div class="form-group">
+        <label for="location">Current Location *</label>
+        <input type="text" id="location" name="location" placeholder="City, Country" required>
+      </div>
+      <div class="btn-group">
+        <div></div>
+        <button type="button" class="btn-primary" id="btn-next-step-1">Next Step &rarr;</button>
+      </div>
+    </div>
+
+    <!-- STEP 2: Resume & Screening Questions -->
+    <div id="step-2" class="step-section">
+      <div class="form-group">
+        <label for="resume-upload">Upload Resume (PDF/TeX) *</label>
+        <input type="file" id="resume-upload" name="resume" accept=".pdf,.tex,.docx">
+      </div>
+      <div class="form-group">
+        <label>Are you legally authorized to work in India? *</label>
+        <div class="radio-group">
+          <label class="radio-label">
+            <input type="radio" name="auth_work" value="Yes" id="auth_yes"> Yes
+          </label>
+          <label class="radio-label">
+            <input type="radio" name="auth_work" value="No" id="auth_no"> No
+          </label>
+        </div>
+      </div>
+      <div class="form-group">
+        <label for="notice_period">What is your notice period? *</label>
+        <select id="notice_period" name="notice_period">
+          <option value="">Select notice period</option>
+          <option value="Immediate">Immediate (0 days)</option>
+          <option value="15 days">15 days</option>
+          <option value="30 days">30 days</option>
+          <option value="60 days">60 days</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label for="experience_years">How many years of Python experience do you have? *</label>
+        <input type="text" id="experience_years" name="experience_years" placeholder="e.g. 1">
+      </div>
+      <div class="form-group">
+        <label for="custom_question">Why are you interested in this role?</label>
+        <textarea id="custom_question" name="custom_question" rows="3" placeholder="Briefly describe your interest..."></textarea>
+      </div>
+      <div class="btn-group">
+        <button type="button" class="btn-secondary" id="btn-prev-step-2">&larr; Back</button>
+        <button type="button" class="btn-primary" id="btn-next-step-2">Review Application &rarr;</button>
+      </div>
+    </div>
+
+    <!-- STEP 3: Review Application -->
+    <div id="step-3" class="step-section">
+      <div class="review-summary" id="review-summary-box">
+        <div><strong>Name:</strong> <span id="rev-name"></span></div>
+        <div><strong>Email:</strong> <span id="rev-email"></span></div>
+        <div><strong>Phone:</strong> <span id="rev-phone"></span></div>
+        <div><strong>Location:</strong> <span id="rev-location"></span></div>
+        <div><strong>Resume:</strong> <span id="rev-resume">Attached</span></div>
+        <div><strong>Work Authorized:</strong> <span id="rev-auth"></span></div>
+        <div><strong>Notice Period:</strong> <span id="rev-notice"></span></div>
+        <div><strong>Python Experience:</strong> <span id="rev-exp"></span> yrs</div>
+      </div>
+      <div class="btn-group">
+        <button type="button" class="btn-secondary" id="btn-prev-step-3">&larr; Back</button>
+        <button type="button" class="btn-primary" id="btn-submit-application">Submit Application</button>
+      </div>
+    </div>
+
+    <!-- CONFIRMATION SCREEN -->
+    <div id="confirmation-screen" class="step-section">
+      <div class="success-icon">&#10004;</div>
+      <h3 style="color:#fff; margin: 0 0 8px 0;">Application Submitted!</h3>
+      <p style="color:#8b949e; font-size:14px; margin:0 0 16px 0;">Your application for Junior AI Engineer has been received by NextGen AI Labs.</p>
+      <div style="font-size:12px; color:#58a6ff;">Confirmation ID: APP-948271</div>
+    </div>
+  </div>
+
+  <script>
+    const s1 = document.getElementById('step-1');
+    const s2 = document.getElementById('step-2');
+    const s3 = document.getElementById('step-3');
+    const sc = document.getElementById('confirmation-screen');
+
+    const b1 = document.getElementById('badge-step-1');
+    const b2 = document.getElementById('badge-step-2');
+    const b3 = document.getElementById('badge-step-3');
+
+    document.getElementById('btn-next-step-1').addEventListener('click', () => {
+      s1.classList.remove('active');
+      s2.classList.add('active');
+      b1.className = 'completed';
+      b2.className = 'active';
+    });
+
+    document.getElementById('btn-prev-step-2').addEventListener('click', () => {
+      s2.classList.remove('active');
+      s1.classList.add('active');
+      b2.className = '';
+      b1.className = 'active';
+    });
+
+    document.getElementById('btn-next-step-2').addEventListener('click', () => {
+      s2.classList.remove('active');
+      s3.classList.add('active');
+      b2.className = 'completed';
+      b3.className = 'active';
+
+      // Populate review summary
+      document.getElementById('rev-name').innerText = document.getElementById('full_name').value;
+      document.getElementById('rev-email').innerText = document.getElementById('email').value;
+      document.getElementById('rev-phone').innerText = document.getElementById('phone').value;
+      document.getElementById('rev-location').innerText = document.getElementById('location').value;
+      document.getElementById('rev-auth').innerText = document.querySelector('input[name="auth_work"]:checked')?.value || 'Yes';
+      document.getElementById('rev-notice').innerText = document.getElementById('notice_period').value;
+      document.getElementById('rev-exp').innerText = document.getElementById('experience_years').value;
+    });
+
+    document.getElementById('btn-prev-step-3').addEventListener('click', () => {
+      s3.classList.remove('active');
+      s2.classList.add('active');
+      b3.className = '';
+      b2.className = 'active';
+    });
+
+    document.getElementById('btn-submit-application').addEventListener('click', () => {
+      s3.classList.remove('active');
+      sc.classList.add('active');
+      b3.className = 'completed';
+    });
+  </script>
+</body>
+</html>

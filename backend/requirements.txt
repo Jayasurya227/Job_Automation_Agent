@@ -1,0 +1,23 @@
+# Phase 1: AI Brain Core Dependencies
+# Pinned to stable minimum versions for reproducible builds.
+# Run `pip freeze > requirements.lock` after a verified install to snapshot exact versions.
+google-generativeai>=0.8.0,<1.0.0
+google-genai>=2.0.0
+pydantic>=2.7.0,<3.0.0
+python-dotenv>=1.0.0,<2.0.0
+
+# Phase 2: Database & API Dependencies
+sqlalchemy>=2.0.0,<3.0.0
+fastapi>=0.115.0,<1.0.0
+uvicorn[standard]>=0.30.0,<1.0.0
+httpx>=0.28.0,<1.0.0
+python-multipart>=0.0.9,<1.0.0
+
+# Phase 3: Browser Automation & Stealth Scraping
+playwright>=1.40.0,<2.0.0
+python-jobspy>=1.1.80,<2.0.0
+pypdf2>=3.0.0,<4.0.0
+
+# Phase 4: LangGraph State Machine & Workflow Orchestration
+langgraph>=0.2.0,<1.0.0
+langgraph-checkpoint-sqlite>=2.0.0,<3.0.0

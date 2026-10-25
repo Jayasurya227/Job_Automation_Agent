@@ -1,0 +1,27 @@
+{
+  "smtp": {
+    "host": "smtp.gmail.com",
+    "port": 587,
+    "sender_email": "your_email@gmail.com",
+    "sender_name": "Your Name",
+    "app_password": "",
+    "daily_limit": 10,
+    "enabled": false
+  },
+  "portals": {
+    "naukri": {
+      "username": "",
+      "password": "",
+      "status": "unconfigured",
+      "last_verified": null
+    },
+    "linkedin": {
+      "username": "",
+      "password": "",
+      "status": "unconfigured",
+      "last_verified": null
+    }
+  },
+  "emails_sent_today": 0,
+  "last_sent_date": null
+}
