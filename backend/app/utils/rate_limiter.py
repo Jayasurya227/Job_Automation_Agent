@@ -42,7 +42,14 @@ class RateLimiter:
                 return result
             except Exception as exc:
                 err_str = str(exc).lower()
-                is_rate_limited = "429" in err_str or "resourceexhausted" in err_str or "quota" in err_str
+                is_rate_limited = (
+                    "429" in err_str
+                    or "resourceexhausted" in err_str
+                    or "quota" in err_str
+                    or "503" in err_str
+                    or "unavailable" in err_str
+                    or "high demand" in err_str
+                )
                 
                 if is_rate_limited and retries < self.max_retries:
                     retries += 1

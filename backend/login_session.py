@@ -54,11 +54,29 @@ async def run_interactive_session(target_url: str, portal_name: str):
         cookies = await context.cookies()
         print(f"✅ Successfully captured {len(cookies)} cookies across current domains.")
 
+        import json
+        from datetime import datetime, timezone
+        marker_file = Path(DEFAULT_SESSION_DIR) / "session_verified.json"
+        try:
+            marker_file.write_text(json.dumps({
+                "portal": portal_name,
+                "connected": True,
+                "verified_at": datetime.now(timezone.utc).isoformat(),
+                "cookie_count": len(cookies)
+            }, indent=2))
+        except Exception as e:
+            print(f"Notice writing session marker: {e}")
+
     print("\n🎉 BROWSER CLOSED CLEANLY. Session saved permanently!")
     print(f"Autonomous agent can now access {portal_name} using this saved session.")
 
 
 def main():
+    if len(sys.argv) > 1 and sys.argv[1].lower() in ["naukri", "--naukri", "-n"]:
+        print("Starting direct Naukri login session...")
+        asyncio.run(run_interactive_session("https://www.naukri.com/nlogin/login", "Naukri"))
+        return
+
     print("\n" + "=" * 50)
     print("🔑 AUTONOMOUS AGENT: SESSION INITIALIZER")
     print("=" * 50)
@@ -88,3 +106,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

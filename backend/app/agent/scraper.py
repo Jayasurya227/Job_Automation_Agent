@@ -156,20 +156,28 @@ async def scrape_naukri_playwright(
     search_term: str,
     location: str = "India",
     results_wanted: int = 10,
+    freshness_days: int = 1,
 ) -> List[DiscoveredJob]:
     """
     Stealth Playwright scraper for Naukri.com using human-like interaction.
     Navigates to the search listing, smoothly scrolls, and extracts DOM job tuples.
+    Applies freshness filter (e.g. freshness=1 for past 24 hours).
     """
     # Clean keyword and location for URL
     clean_keyword = re.sub(r"[^a-zA-Z0-9\s]", "", search_term).strip().replace(" ", "-").lower()
     clean_loc = re.sub(r"[^a-zA-Z0-9\s]", "", location).strip().replace(" ", "-").lower()
     if clean_loc in ["remote", "hybrid", ""]:
-        url = f"https://www.naukri.com/{clean_keyword}-jobs"
+        base_url = f"https://www.naukri.com/{clean_keyword}-jobs"
     else:
-        url = f"https://www.naukri.com/{clean_keyword}-jobs-in-{clean_loc}"
+        base_url = f"https://www.naukri.com/{clean_keyword}-jobs-in-{clean_loc}"
 
-    logger.info(f"Launching Playwright stealth session for Naukri: {url}")
+    # Apply Naukri freshness query parameter (1 = past 24 hours, 3 = past 3 days)
+    if freshness_days and freshness_days > 0:
+        url = f"{base_url}?freshness={freshness_days}"
+    else:
+        url = base_url
+
+    logger.info(f"Launching Playwright stealth session for Naukri (freshness={freshness_days}d): {url}")
     jobs: List[DiscoveredJob] = []
 
     try:
@@ -221,6 +229,15 @@ async def scrape_naukri_playwright(
                     desc_elem = await card.query_selector(".job-desc") or await card.query_selector(".job-description")
                     desc = (await desc_elem.inner_text()).strip() if desc_elem else ""
 
+                    # Extract posted date tag (e.g. 'Just Now', 'Few Hours Ago', '1 Day Ago')
+                    date_elem = (
+                        await card.query_selector(".job-post-day") or
+                        await card.query_selector("span.date") or
+                        await card.query_selector(".type") or
+                        await card.query_selector(".tuple-sub-title")
+                    )
+                    date_posted = (await date_elem.inner_text()).strip() if date_elem else "Past 24 Hours"
+
                     if title and company and job_url:
                         if not job_url.startswith("http"):
                             job_url = "https://www.naukri.com" + job_url
@@ -233,13 +250,14 @@ async def scrape_naukri_playwright(
                                 portal="naukri",
                                 job_url=job_url,
                                 description=desc,
+                                date_posted=date_posted,
                             )
                         )
                 except Exception as card_err:
                     logger.debug(f"Error parsing single Naukri card: {card_err}")
                     continue
 
-        logger.info(f"Playwright extracted {len(jobs)} jobs from Naukri.")
+        logger.info(f"Playwright extracted {len(jobs)} fresh jobs from Naukri.")
         return jobs
 
     except Exception as e:
@@ -252,6 +270,7 @@ async def discover_jobs(
     location: Optional[str] = None,
     portals: Optional[List[str]] = None,
     results_per_portal: int = 10,
+    freshness_days: int = 1,
     deduplicate: bool = True,
 ) -> List[DiscoveredJob]:
     """
@@ -262,16 +281,19 @@ async def discover_jobs(
     prefs = load_candidate_preferences()
     target_roles = prefs.get("target_roles", ["Python Developer"])
     preferred_locs = prefs.get("preferred_locations", ["India", "Remote"])
+    saved_freshness = prefs.get("freshness_days", 1)
 
     search = search_term or (target_roles[0] if target_roles else "Python Developer")
     loc = location or (preferred_locs[0] if preferred_locs else "India")
     portal_list = portals or ["naukri"]
+    effective_freshness = freshness_days if freshness_days is not None else saved_freshness
 
     all_jobs: List[DiscoveredJob] = []
 
     # 1. JobSpy Aggregation (LinkedIn, Indeed, Glassdoor, ZipRecruiter)
     jobspy_portals = [p for p in portal_list if p.lower() in ["linkedin", "indeed", "glassdoor", "zip_recruiter", "ziprecruiter"]]
     if jobspy_portals:
+        hours_old = (effective_freshness * 24) if (effective_freshness and effective_freshness > 0) else 72
         jobspy_results = await asyncio.to_thread(
             _run_jobspy_sync,
             search_term=search,
@@ -279,6 +301,7 @@ async def discover_jobs(
             portals=jobspy_portals,
             results_wanted=results_per_portal,
             country="India" if "india" in loc.lower() else "USA",
+            hours_old=hours_old,
         )
         all_jobs.extend(jobspy_results)
 
@@ -288,6 +311,7 @@ async def discover_jobs(
             search_term=search,
             location=loc,
             results_wanted=results_per_portal,
+            freshness_days=effective_freshness,
         )
         all_jobs.extend(naukri_results)
 

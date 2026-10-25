@@ -126,7 +126,7 @@ export const api = {
     body: JSON.stringify({ question, answer, category }),
   }),
 
-  // Sub-Phase 5.4: Account Connection Settings & Recruiter Outreach
+  // Sub-Phase 5.4: Account Connection Settings
   getSettings: () => request('/api/settings'),
 
   updateSettings: (payload) => request('/api/settings', {
@@ -134,15 +134,13 @@ export const api = {
     body: JSON.stringify(payload),
   }),
 
-  testSMTP: (payload) => request('/api/outreach/test-smtp', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  }),
+  // Auto-Pilot Autonomous Background Engine
+  getAutopilotStatus: () => request('/api/autopilot/status'),
+  runAutopilotNow: () => request('/api/autopilot/run-now', { method: 'POST' }),
 
-  sendColdEmail: (payload) => request('/api/outreach/send-email', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  }),
+  // Portal Persistent Session (Naukri Safe OTP Login)
+  getNaukriSessionStatus: () => request('/api/portals/naukri/session-status'),
+  launchNaukriSession: () => request('/api/portals/naukri/launch-session', { method: 'POST' }),
 
   // Sub-Phase 5.1: Server-Sent Events (SSE) Real-Time Subscription
   subscribeToEvents: (topic = 'all', onEvent, onError) => {

@@ -109,7 +109,7 @@ export default function Navbar({
               }}
             >
               <Layers size={16} />
-              Pipeline
+              <span>Pipeline</span>
             </button>
 
             <button
@@ -132,7 +132,7 @@ export default function Navbar({
               }}
             >
               <Settings size={16} />
-              Settings
+              <span>Settings</span>
             </button>
           </div>
 

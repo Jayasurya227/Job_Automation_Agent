@@ -103,6 +103,7 @@ class DiscoverJobsRequest(BaseModel):
     location: Optional[str] = Field(default=None, description="Target location or 'Remote'")
     portals: Optional[List[str]] = Field(default=["naukri"], description="List of job portals to scrape")
     results_wanted: int = Field(default=8, ge=1, le=25, description="Number of results to query per portal")
+    freshness_days: Optional[int] = Field(default=1, ge=0, le=30, description="Posting freshness in days (1 = last 24 hours)")
     min_match_score: int = Field(default=75, ge=0, le=100, description="Minimum match score to mark job as Ready and tailor resume")
     max_process: int = Field(default=5, ge=1, le=15, description="Maximum new jobs to score and ingest in this run")
 

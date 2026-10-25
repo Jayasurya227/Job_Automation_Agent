@@ -20,12 +20,13 @@ import {
   GraduationCap,
   Loader2,
   Check,
-  Download
+  Download,
+  ChevronDown,
+  ChevronUp
 } from 'lucide-react';
 import { api } from '../api';
 
 export default function ProfileEditor({ isOpen, onClose, notify, onProfileUpdated, inline = false }) {
-  if (!inline && !isOpen) return null;
 
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -42,6 +43,24 @@ export default function ProfileEditor({ isOpen, onClose, notify, onProfileUpdate
   const [newLocation, setNewLocation] = useState('');
   const [newSkillCategory, setNewSkillCategory] = useState('programming_languages');
   const [newSkill, setNewSkill] = useState('');
+
+  // Dropdown state for Default Freshness Rule
+  const [isFreshnessOpen, setIsFreshnessOpen] = useState(false);
+  const freshnessDropdownRef = useRef(null);
+
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (freshnessDropdownRef.current && !freshnessDropdownRef.current.contains(event.target)) {
+        setIsFreshnessOpen(false);
+      }
+    }
+    if (isFreshnessOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isFreshnessOpen]);
 
   const handleDownloadResume = async () => {
     setDownloadingPdf(true);
@@ -561,7 +580,7 @@ export default function ProfileEditor({ isOpen, onClose, notify, onProfileUpdate
                   </div>
 
                   {/* Career Preferences Grid */}
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '16px' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px' }}>
                     <div>
                       <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '5px' }}>
                         Min Expected Salary / CTC
@@ -591,6 +610,232 @@ export default function ProfileEditor({ isOpen, onClose, notify, onProfileUpdate
                           preferences: { ...profile.preferences, notice_period_days: parseInt(e.target.value) || 0 }
                         })}
                       />
+                    </div>
+
+                    {/* Compact Dropdown: Posting Freshness Rule */}
+                    <div ref={freshnessDropdownRef} style={{ position: 'relative' }}>
+                      <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '5px' }}>
+                        Posting Freshness Rule
+                      </label>
+                      {(() => {
+                        const currentVal = profile.preferences?.freshness_days ?? 1;
+                        const FRESHNESS_OPTIONS = [
+                          { value: 1, label: 'Past 24 Hours', icon: '⚡' },
+                          { value: 3, label: 'Past 3 Days', icon: '📅' },
+                          { value: 7, label: 'Past 7 Days', icon: '🗓️' },
+                          { value: 0, label: 'Anytime', icon: '🌐' },
+                        ];
+                        const activeOpt = FRESHNESS_OPTIONS.find((o) => o.value === currentVal) || FRESHNESS_OPTIONS[0];
+
+                        return (
+                          <div style={{ position: 'relative' }}>
+                            <button
+                              id="freshness-dropdown-toggle-btn"
+                              type="button"
+                              className="form-input"
+                              onClick={() => setIsFreshnessOpen((prev) => !prev)}
+                              style={{
+                                width: '100%',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                cursor: 'pointer',
+                                background: '#ffffff',
+                                border: isFreshnessOpen ? '1px solid #06b6d4' : '1px solid var(--border-subtle)',
+                                color: '#0891b2',
+                                fontWeight: 700,
+                                fontSize: '0.84rem',
+                                padding: '8px 12px',
+                                boxShadow: isFreshnessOpen ? '0 0 0 3px rgba(6, 182, 212, 0.15)' : 'none',
+                                transition: 'all 0.15s ease',
+                              }}
+                            >
+                              <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <span>{activeOpt.icon}</span>
+                                <span>{activeOpt.label}</span>
+                              </span>
+                              {isFreshnessOpen ? <ChevronUp size={15} color="#0891b2" /> : <ChevronDown size={15} color="#0891b2" />}
+                            </button>
+
+                            {/* Floating Dropdown Menu */}
+                            {isFreshnessOpen && (
+                              <div style={{
+                                position: 'absolute',
+                                left: 0,
+                                right: 0,
+                                top: 'calc(100% + 4px)',
+                                background: '#ffffff',
+                                border: '1px solid rgba(6, 182, 212, 0.3)',
+                                borderRadius: '10px',
+                                boxShadow: '0 10px 25px rgba(15, 23, 42, 0.12), 0 4px 10px rgba(6, 182, 212, 0.08)',
+                                zIndex: 60,
+                                padding: '4px',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: '2px',
+                              }}>
+                                {FRESHNESS_OPTIONS.map((opt) => {
+                                  const isSelected = currentVal === opt.value;
+                                  return (
+                                    <div
+                                      key={opt.value}
+                                      onClick={() => {
+                                        setProfile({
+                                          ...profile,
+                                          preferences: { ...profile.preferences, freshness_days: opt.value }
+                                        });
+                                        setIsFreshnessOpen(false);
+                                      }}
+                                      style={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'space-between',
+                                        padding: '8px 10px',
+                                        borderRadius: '7px',
+                                        cursor: 'pointer',
+                                        background: isSelected ? 'rgba(6, 182, 212, 0.12)' : 'transparent',
+                                        color: isSelected ? '#0891b2' : 'var(--text-main)',
+                                        fontSize: '0.82rem',
+                                        fontWeight: isSelected ? 700 : 500,
+                                        transition: 'background 0.12s',
+                                      }}
+                                      onMouseEnter={(e) => {
+                                        if (!isSelected) e.currentTarget.style.background = 'rgba(15, 23, 42, 0.04)';
+                                      }}
+                                      onMouseLeave={(e) => {
+                                        if (!isSelected) e.currentTarget.style.background = isSelected ? 'rgba(6, 182, 212, 0.12)' : 'transparent';
+                                      }}
+                                    >
+                                      <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                        <span>{opt.icon}</span>
+                                        <span>{opt.label}</span>
+                                      </span>
+                                      {isSelected && <Check size={14} color="#0891b2" />}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  </div>
+
+                  {/* Smart Auto-Pilot Settings Card */}
+                  <div style={{
+                    background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.05) 0%, rgba(6, 182, 212, 0.05) 100%)',
+                    border: '1px solid rgba(99, 102, 241, 0.2)',
+                    borderRadius: '12px',
+                    padding: '16px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '12px',
+                    marginTop: '10px'
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <div style={{
+                          width: '32px',
+                          height: '32px',
+                          borderRadius: '8px',
+                          background: 'rgba(99, 102, 241, 0.15)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          color: 'var(--primary)',
+                        }}>
+                          <Clock size={18} />
+                        </div>
+                        <div>
+                          <div style={{ fontSize: '0.92rem', fontWeight: 700, color: 'var(--text-main)' }}>
+                            Autonomous Night Scheduler (Auto-Pilot)
+                          </div>
+                          <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>
+                            Scans fresh postings at night & submits applications for top matches (≥ 80%)
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Toggle Switch */}
+                      <label style={{ display: 'inline-flex', alignItems: 'center', cursor: 'pointer', gap: '8px' }}>
+                        <input
+                          type="checkbox"
+                          checked={profile.preferences?.autopilot_enabled ?? false}
+                          onChange={(e) => setProfile({
+                            ...profile,
+                            preferences: { ...profile.preferences, autopilot_enabled: e.target.checked }
+                          })}
+                          style={{ width: '18px', height: '18px', cursor: 'pointer', accentColor: 'var(--primary)' }}
+                        />
+                        <span style={{ fontSize: '0.82rem', fontWeight: 700, color: profile.preferences?.autopilot_enabled ? 'var(--emerald)' : 'var(--text-muted)' }}>
+                          {profile.preferences?.autopilot_enabled ? 'Active (Auto-Pilot ON)' : 'Disabled (Manual Only)'}
+                        </span>
+                      </label>
+                    </div>
+
+                    {/* Auto-Pilot Rules Row */}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', paddingTop: '4px' }}>
+                      <div>
+                        <label style={{ display: 'block', fontSize: '0.74rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                          Night Run Time
+                        </label>
+                        <input
+                          type="time"
+                          className="form-input"
+                          value={`${String(profile.preferences?.autopilot_run_hour ?? 22).padStart(2, '0')}:${String(profile.preferences?.autopilot_run_minute ?? 30).padStart(2, '0')}`}
+                          onChange={(e) => {
+                            const [h, m] = (e.target.value || '22:30').split(':');
+                            setProfile({
+                              ...profile,
+                              preferences: {
+                                ...profile.preferences,
+                                autopilot_run_hour: parseInt(h) || 22,
+                                autopilot_run_minute: parseInt(m) || 30,
+                              }
+                            });
+                          }}
+                          style={{ fontSize: '0.82rem', padding: '6px 10px' }}
+                        />
+                      </div>
+
+                      <div>
+                        <label style={{ display: 'block', fontSize: '0.74rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                          Auto-Apply Score (Min %)
+                        </label>
+                        <select
+                          className="form-select"
+                          value={profile.preferences?.autopilot_auto_apply_score ?? 80}
+                          onChange={(e) => setProfile({
+                            ...profile,
+                            preferences: { ...profile.preferences, autopilot_auto_apply_score: parseInt(e.target.value) }
+                          })}
+                          style={{ fontSize: '0.82rem', padding: '6px 10px' }}
+                        >
+                          <option value={75}>≥ 75% Match</option>
+                          <option value={80}>≥ 80% Match (Recommended)</option>
+                          <option value={85}>≥ 85% Match (Strict)</option>
+                          <option value={90}>≥ 90% Match (Elite)</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label style={{ display: 'block', fontSize: '0.74rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                          Nightly Application Cap
+                        </label>
+                        <input
+                          type="number"
+                          className="form-input"
+                          min={1}
+                          max={25}
+                          value={profile.preferences?.autopilot_max_daily_apps ?? 12}
+                          onChange={(e) => setProfile({
+                            ...profile,
+                            preferences: { ...profile.preferences, autopilot_max_daily_apps: parseInt(e.target.value) || 12 }
+                          })}
+                          style={{ fontSize: '0.82rem', padding: '6px 10px' }}
+                        />
+                      </div>
                     </div>
                   </div>
 
@@ -961,6 +1206,10 @@ export default function ProfileEditor({ isOpen, onClose, notify, onProfileUpdate
 
   if (inline) {
     return panelContent;
+  }
+
+  if (!isOpen) {
+    return null;
   }
 
   return (

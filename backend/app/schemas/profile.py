@@ -21,6 +21,12 @@ class Preferences(BaseModel):
     work_modes: List[str] = Field(default_factory=lambda: ["Remote", "Hybrid"], description="Work styles")
     min_expected_salary: Optional[str] = Field(default="", description="Expected CTC / salary range")
     notice_period_days: int = Field(default=0, description="Notice period in days (0 = Immediate joiner)")
+    freshness_days: int = Field(default=1, ge=0, le=30, description="Default freshness filter in days (1 = last 24h, 3 = 3 days, 7 = 7 days, 0 = any)")
+    autopilot_enabled: bool = Field(default=False, description="Enable automated night runs")
+    autopilot_auto_apply_score: int = Field(default=80, ge=50, le=100, description="Minimum score to auto-apply")
+    autopilot_max_daily_apps: int = Field(default=12, ge=1, le=50, description="Max applications per day")
+    autopilot_run_hour: int = Field(default=22, ge=0, le=23, description="Hour of day to run (e.g. 22 = 10 PM)")
+    autopilot_run_minute: int = Field(default=30, ge=0, le=59, description="Minute of hour to run (e.g. 30)")
 
 class TechnicalSkills(BaseModel):
     programming_languages: List[str] = Field(default_factory=list)

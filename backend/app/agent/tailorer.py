@@ -20,7 +20,7 @@ from google.genai import types
 
 logger = logging.getLogger("tailorer")
 
-from app.config import DEFAULT_MODEL, gemini_client
+from app.config import DEFAULT_MODEL, gemini_client, BASE_DIR
 from app.utils.rate_limiter import execute_with_rate_limit
 from app.schemas.match import JobMatchResult
 from app.agent.scorer import load_profile
@@ -163,6 +163,8 @@ def tailor_resume(
 
     # Read base template
     template_file = Path(template_path)
+    if not template_file.exists() and (BASE_DIR / template_path).exists():
+        template_file = BASE_DIR / template_path
     if not template_file.exists():
         raise FileNotFoundError(f"Template not found at: {template_path}")
     tex_content = template_file.read_text(encoding="utf-8")
@@ -218,6 +220,8 @@ def tailor_resume(
 
     # Save output .tex file
     out_dir = Path(output_dir)
+    if not out_dir.is_absolute() and not out_dir.exists() and (BASE_DIR / output_dir).parent.exists():
+        out_dir = BASE_DIR / output_dir
     out_dir.mkdir(parents=True, exist_ok=True)
     safe_title = re.sub(r'[^a-zA-Z0-9_-]', '_', match_result.job_title).lower()
     tex_path = out_dir / f"{safe_title}_resume.tex"

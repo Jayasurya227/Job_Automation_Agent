@@ -39,5 +39,5 @@ CORS_ORIGINS: List[str] = [
 ]
 
 # AI Generation defaults
-DEFAULT_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
+DEFAULT_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 DEFAULT_PACING_SECONDS: float = 2.5

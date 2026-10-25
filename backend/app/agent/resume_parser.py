@@ -9,8 +9,8 @@ import logging
 import re
 from typing import Dict, Any, Optional
 import pypdf
-import google.generativeai as genai
-from app.config import DEFAULT_MODEL, BASE_DIR, DATA_DIR
+from google.genai import types as genai_types
+from app.config import DEFAULT_MODEL, BASE_DIR, DATA_DIR, gemini_client
 from app.schemas.profile import CandidateProfile
 
 logger = logging.getLogger("agent.resume_parser")
@@ -53,13 +53,10 @@ def parse_resume_content(
         "6. ZERO HALLUCINATION: Only include facts explicitly mentioned in the resume text.\n"
     )
 
-    model = genai.GenerativeModel(
-        model_name=DEFAULT_MODEL,
+    parse_config = genai_types.GenerateContentConfig(
+        response_mime_type="application/json",
+        temperature=0.1,
         system_instruction=system_instruction,
-        generation_config={
-            "response_mime_type": "application/json",
-            "temperature": 0.1,
-        }
     )
 
     prompt = (
@@ -116,8 +113,12 @@ def parse_resume_content(
         f"{resume_text}"
     )
 
-    response = model.generate_content(prompt)
-    raw_content = response.text.strip()
+    response = gemini_client.models.generate_content(
+        model=DEFAULT_MODEL,
+        contents=prompt,
+        config=parse_config,
+    )
+    raw_content = (response.text or "").strip()
 
     # Strip code block wrappers if present
     if raw_content.startswith("```"):

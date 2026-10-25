@@ -16,7 +16,7 @@ python-multipart>=0.0.9,<1.0.0
 # Phase 3: Browser Automation & Stealth Scraping
 playwright>=1.40.0,<2.0.0
 python-jobspy>=1.1.80,<2.0.0
-pypdf2>=3.0.0,<4.0.0
+pypdf>=4.0.0,<5.0.0
 
 # Phase 4: LangGraph State Machine & Workflow Orchestration
 langgraph>=0.2.0,<1.0.0

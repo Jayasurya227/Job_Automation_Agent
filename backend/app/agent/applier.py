@@ -392,6 +392,196 @@ class EasyApplyFiller:
 
         return False, False
 
+    def _apply_naukri_live(
+        self,
+        page: Page,
+        context: Any,
+        target_url: str,
+        job_title: str,
+        company_name: str,
+        tid: str,
+        snapshot_file: Path,
+        confirmed_snapshot_file: Path,
+        auto_submit: bool = False,
+    ) -> FormFillResult:
+        """
+        Specialized live Naukri applicant engine.
+        Inherits authenticated browser session cookies from backend/data/browser_session/.
+        Handles Already Applied, Login Required, Company Site Redirection, and Questionnaire drawers.
+        """
+        logger.info(f"[{tid}] Navigating to live Naukri posting: {target_url}")
+        try:
+            page.goto(target_url, timeout=30000, wait_until="domcontentloaded")
+            page.wait_for_timeout(random.randint(1800, 2500))
+        except Exception as nav_err:
+            logger.error(f"[{tid}] Failed to reach Naukri listing: {nav_err}")
+            try:
+                page.screenshot(path=str(snapshot_file), full_page=True)
+            except Exception:
+                pass
+            context.close()
+            return FormFillResult(
+                status="NAVIGATION_FAILED",
+                thread_id=tid,
+                job_title=job_title,
+                company_name=company_name,
+                snapshot_path=str(snapshot_file) if snapshot_file.exists() else None,
+                error_message=f"Live Naukri navigation error: {str(nav_err)}"
+            )
+
+        # 1. Anti-Bot Challenge Check
+        challenge = check_bot_challenge(page)
+        if challenge:
+            logger.warning(f"[{tid}] Naukri bot challenge detected: {challenge}")
+            page.screenshot(path=str(snapshot_file), full_page=True)
+            context.close()
+            return FormFillResult(
+                status="BOT_CHALLENGE",
+                thread_id=tid,
+                job_title=job_title,
+                company_name=company_name,
+                snapshot_path=str(snapshot_file),
+                error_message=f"Naukri verification required: {challenge}"
+            )
+
+        # 2. Already Applied Check
+        already_applied_selectors = [
+            ".already-applied",
+            "button:has-text('Already Applied')",
+            "span:has-text('Already Applied')",
+            ".applied-message",
+        ]
+        for sel in already_applied_selectors:
+            elem = page.query_selector(sel)
+            if elem and elem.is_visible():
+                logger.info(f"[{tid}] Job already applied on Naukri.")
+                page.screenshot(path=str(confirmed_snapshot_file), full_page=True)
+                context.close()
+                return FormFillResult(
+                    status="SUBMITTED",
+                    thread_id=tid,
+                    job_title=job_title,
+                    company_name=company_name,
+                    confirmation_snapshot_path=str(confirmed_snapshot_file),
+                    error_message="Already marked as applied on candidate Naukri account."
+                )
+
+        # 3. Check if Login is Required (Session missing/expired)
+        if page.query_selector("a#login_Layer:visible, .login-btn:visible, a:has-text('Login to apply'):visible"):
+            logger.warning(f"[{tid}] Naukri session not detected. Login required.")
+            page.screenshot(path=str(snapshot_file), full_page=True)
+            context.close()
+            return FormFillResult(
+                status="LOGIN_REQUIRED",
+                thread_id=tid,
+                job_title=job_title,
+                company_name=company_name,
+                snapshot_path=str(snapshot_file),
+                error_message="Naukri session not authenticated. Please click 'Connect Naukri' in Settings to log in."
+            )
+
+        # 4. External Company Site Check
+        company_site_btn = page.query_selector("button:has-text('Apply on company site'), a:has-text('Apply on company site'), .company-site-button")
+        if company_site_btn and company_site_btn.is_visible():
+            logger.info(f"[{tid}] Naukri posting redirects to external company portal.")
+            page.screenshot(path=str(snapshot_file), full_page=True)
+            context.close()
+            return FormFillResult(
+                status="EXTERNAL_SITE",
+                thread_id=tid,
+                job_title=job_title,
+                company_name=company_name,
+                snapshot_path=str(snapshot_file),
+                error_message="Listing redirects to external employer ATS portal."
+            )
+
+        # 5. Locate 1-Click Apply Button
+        apply_selectors = [
+            "button#apply-button:visible",
+            "button.apply-button:visible",
+            ".apply-button:visible",
+            "button:has-text('Apply on Naukri'):visible",
+            "button:has-text('Apply'):visible",
+        ]
+        apply_btn = None
+        apply_sel_used = None
+        for sel in apply_selectors:
+            elem = page.query_selector(sel)
+            if elem and elem.is_visible():
+                apply_btn = elem
+                apply_sel_used = sel
+                break
+
+        if not apply_btn:
+            logger.warning(f"[{tid}] Could not find active Apply button on Naukri.")
+            page.screenshot(path=str(snapshot_file), full_page=True)
+            context.close()
+            return FormFillResult(
+                status="NO_APPLY_BUTTON",
+                thread_id=tid,
+                job_title=job_title,
+                company_name=company_name,
+                snapshot_path=str(snapshot_file),
+                error_message="Active Apply button not found on Naukri job card."
+            )
+
+        # Pre-apply snapshot for Assisted Review Gateway
+        page.screenshot(path=str(snapshot_file), full_page=True)
+
+        if not auto_submit:
+            context.close()
+            return FormFillResult(
+                status="READY_FOR_REVIEW",
+                thread_id=tid,
+                job_title=job_title,
+                company_name=company_name,
+                snapshot_path=str(snapshot_file),
+                steps_traversed=1
+            )
+
+        # 6. Execute Click & Handle Chatbot / Questionnaire Drawer
+        logger.info(f"[{tid}] Clicking Naukri Apply button using selector: {apply_sel_used}")
+        try:
+            HumanInteractionEngine.human_click_sync(page, apply_sel_used)
+        except Exception:
+            apply_btn.click()
+
+        page.wait_for_timeout(random.randint(2000, 3000))
+
+        # Check for questionnaire drawer or chatbot popup
+        drawer = page.query_selector(".chatbot_drawer, .drawer-wrapper, .apply-modal-wrapper, .bot-drawer")
+        if drawer and drawer.is_visible():
+            logger.info(f"[{tid}] Naukri questionnaire drawer detected. Auto-answering screening fields...")
+            try:
+                # Answer notice period if asked
+                np_btn = page.query_selector("button:has-text('15 Days or less'), button:has-text('15 Days'), button:has-text('Immediate'), input[placeholder*='notice']")
+                if np_btn:
+                    np_btn.click()
+                    page.wait_for_timeout(1000)
+
+                # Click Submit in drawer
+                drawer_submit = page.query_selector("button:has-text('Save & Apply'), button:has-text('Submit'), button:has-text('Apply'):visible")
+                if drawer_submit:
+                    drawer_submit.click()
+                    page.wait_for_timeout(2000)
+            except Exception as drawer_err:
+                logger.warning(f"[{tid}] Notice handling questionnaire drawer: {drawer_err}")
+
+        # Final Confirmation Snapshot
+        page.screenshot(path=str(confirmed_snapshot_file), full_page=True)
+        context.close()
+        logger.info(f"[{tid}] Naukri application submitted successfully.")
+
+        return FormFillResult(
+            status="SUBMITTED",
+            thread_id=tid,
+            job_title=job_title,
+            company_name=company_name,
+            snapshot_path=str(snapshot_file),
+            confirmation_snapshot_path=str(confirmed_snapshot_file),
+            steps_traversed=1
+        )
+
     def fill_and_stage_application(
         self,
         target_url_or_path: str,
@@ -405,6 +595,7 @@ class EasyApplyFiller:
         Main runner: Navigates multi-step form with stealth spoofing & human pacing,
         fills candidate data, checks for bot challenges, takes review snapshot,
         and either pauses for Assisted Review Gateway or executes submission.
+        Inherits authenticated browser session from backend/data/browser_session/.
         """
         tid = thread_id or f"app_{int(time.time() * 1000)}"
         snapshot_file = SNAPSHOT_DIR / f"review_{tid}.png"
@@ -413,13 +604,15 @@ class EasyApplyFiller:
         all_filled: List[FieldMatchResult] = []
         steps_count = 0
 
+        session_dir = DATA_DIR / "browser_session"
+        session_dir.mkdir(parents=True, exist_ok=True)
+
         with sync_playwright() as p:
             fp = get_random_fingerprint()
-            browser = p.chromium.launch(
+            context = p.chromium.launch_persistent_context(
+                user_data_dir=str(session_dir),
                 headless=self.headless,
-                args=get_stealth_chromium_args()
-            )
-            context = browser.new_context(
+                args=get_stealth_chromium_args(),
                 viewport={"width": 1280, "height": 800},
                 user_agent=fp["user_agent"],
                 locale="en-US",
@@ -427,16 +620,41 @@ class EasyApplyFiller:
                 ignore_https_errors=True,
             )
             context.add_init_script(build_stealth_js(fp))
-            page = context.new_page()
+            page = context.pages[0] if context.pages else context.new_page()
 
-            # Format URL or local file
+            # Specialized handler for live Naukri applications
+            if "naukri.com" in target_url_or_path:
+                return self._apply_naukri_live(
+                    page=page,
+                    context=context,
+                    target_url=target_url_or_path,
+                    job_title=job_title,
+                    company_name=company_name,
+                    tid=tid,
+                    snapshot_file=snapshot_file,
+                    confirmed_snapshot_file=confirmed_snapshot_file,
+                    auto_submit=auto_submit,
+                )
+
+            # Format URL or local file for generic forms
             if target_url_or_path.startswith("http://") or target_url_or_path.startswith("https://"):
                 try:
-                    page.goto(target_url_or_path, timeout=6000, wait_until="domcontentloaded")
+                    page.goto(target_url_or_path, timeout=30000, wait_until="domcontentloaded")
                 except Exception as nav_err:
-                    logger.warning(f"Live portal navigation timed out or blocked ({nav_err}). Using high-fidelity application modal fallback.")
-                    mock_file = Path("data/mock_easy_apply.html").resolve()
-                    page.goto(f"file:///{str(mock_file).replace(os.sep, '/')}", wait_until="load")
+                    logger.error(f"Live portal navigation failed: {nav_err}")
+                    try:
+                        page.screenshot(path=str(snapshot_file), full_page=True)
+                    except Exception:
+                        pass
+                    context.close()
+                    return FormFillResult(
+                        status="NAVIGATION_FAILED",
+                        thread_id=tid,
+                        job_title=job_title,
+                        company_name=company_name,
+                        snapshot_path=str(snapshot_file) if snapshot_file.exists() else None,
+                        error_message=f"Live portal navigation failed: {nav_err}"
+                    )
             else:
                 local_file = Path(target_url_or_path).resolve()
                 if not local_file.exists():
@@ -449,7 +667,7 @@ class EasyApplyFiller:
                 logger.warning(f"[{tid}] Anti-bot challenge detected on entry: {initial_challenge}")
                 challenge_snapshot = SNAPSHOT_DIR / f"challenge_{tid}.png"
                 page.screenshot(path=str(challenge_snapshot), full_page=True)
-                browser.close()
+                context.close()
                 return FormFillResult(
                     status="BOT_CHALLENGE",
                     thread_id=tid,
@@ -481,7 +699,7 @@ class EasyApplyFiller:
                     logger.warning(f"[{tid}] Anti-bot challenge detected at step {steps_count}: {step_challenge}")
                     challenge_snapshot = SNAPSHOT_DIR / f"challenge_{tid}.png"
                     page.screenshot(path=str(challenge_snapshot), full_page=True)
-                    browser.close()
+                    context.close()
                     return FormFillResult(
                         status="BOT_CHALLENGE",
                         thread_id=tid,
@@ -510,7 +728,7 @@ class EasyApplyFiller:
 
             if not auto_submit:
                 # Assisted Mode: Pause at review gateway
-                browser.close()
+                context.close()
                 return FormFillResult(
                     status="READY_FOR_REVIEW",
                     thread_id=tid,
@@ -533,7 +751,7 @@ class EasyApplyFiller:
                     page.wait_for_timeout(random.randint(500, 900))
                     page.screenshot(path=str(confirmed_snapshot_file), full_page=True)
 
-                browser.close()
+                context.close()
                 return FormFillResult(
                     status="SUBMITTED",
                     thread_id=tid,

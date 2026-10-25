@@ -13,7 +13,8 @@ import {
   AlertTriangle, 
   RefreshCw,
   User,
-  Globe
+  Globe,
+  Clock
 } from 'lucide-react';
 
 export default function App() {
@@ -137,8 +138,16 @@ export default function App() {
       job.company_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       (job.location && job.location.toLowerCase().includes(searchTerm.toLowerCase()));
 
-    // 'All' passes through; any specific status does an exact match against backend status value
-    const matchesStatus = statusFilter === 'All' || job.status === statusFilter;
+    let matchesStatus = true;
+    if (statusFilter === 'All') {
+      matchesStatus = job.status !== 'Archived';
+    } else if (statusFilter === 'Saved') {
+      matchesStatus = job.status !== 'Applied' && job.status !== 'Archived';
+    } else if (statusFilter === 'Ready') {
+      matchesStatus = job.status === 'Ready';
+    } else {
+      matchesStatus = job.status === statusFilter;
+    }
 
     return matchesSearch && matchesStatus;
   });
@@ -216,30 +225,53 @@ export default function App() {
               </div>
 
               {/* Status Filter & View Toggle */}
-              <div className="controls-filter-box">
+              <div className="controls-filter-box" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                 <select
                   id="status-filter-select"
                   className="form-select"
-                  style={{ width: 'auto' }}
+                  style={{ width: 'auto', fontWeight: 600, color: 'var(--text-main)' }}
                   value={statusFilter}
                   onChange={(e) => setStatusFilter(e.target.value)}
                 >
-                  <option value="All">All Jobs ({jobs.length})</option>
-                  <option value="Saved">Saved ({jobs.filter(j => j.status === 'Saved').length})</option>
-                  <option value="Tailored">Tailored ({jobs.filter(j => j.status === 'Tailored').length})</option>
-                  <option value="Ready">Ready to Apply ({jobs.filter(j => j.status === 'Ready').length})</option>
-                  <option value="Applied">Applied ({jobs.filter(j => j.status === 'Applied').length})</option>
-                  <option value="Interview">Interview ({jobs.filter(j => j.status === 'Interview').length})</option>
-                  <option value="Offer">Offer ({jobs.filter(j => j.status === 'Offer').length})</option>
-                  <option value="Rejected">Rejected ({jobs.filter(j => j.status === 'Rejected').length})</option>
-                  <option value="Archived">Archived ({jobs.filter(j => j.status === 'Archived').length})</option>
+                  <option value="All">🌐 All Jobs ({jobs.filter(j => j.status !== 'Archived').length})</option>
+                  <option value="Saved">🔍 Discovered Jobs ({jobs.filter(j => j.status !== 'Applied' && j.status !== 'Archived').length})</option>
+                  <option value="Ready">⭐ Ready to Review ({jobs.filter(j => j.status === 'Ready').length})</option>
+                  <option value="Applied">⚡ Applied Jobs ({jobs.filter(j => j.status === 'Applied').length})</option>
+                  <option value="Archived">📁 Archived ({jobs.filter(j => j.status === 'Archived').length})</option>
                 </select>
+
+                {/* Live Freshness Rule Badge */}
+                <div 
+                  id="active-freshness-rule-badge"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    background: 'rgba(6, 182, 212, 0.08)',
+                    border: '1px solid rgba(6, 182, 212, 0.25)',
+                    padding: '6px 12px',
+                    borderRadius: '8px',
+                    fontSize: '0.78rem',
+                    color: 'var(--cyan-light)',
+                    whiteSpace: 'nowrap',
+                    cursor: 'pointer'
+                  }}
+                  onClick={() => {
+                    setActiveTab('settings');
+                    setSettingsTab('profile');
+                  }}
+                  title="Click to customize your Default Job Freshness Rule in Settings"
+                >
+                  <Clock size={13} color="#06b6d4" />
+                  <span>Rule: <strong>{profile?.preferences?.freshness_days === 1 || profile?.preferences?.freshness_days === undefined ? '⚡ Last 24 Hours' : profile?.preferences?.freshness_days === 3 ? 'Last 3 Days' : profile?.preferences?.freshness_days === 7 ? 'Last 7 Days' : 'Anytime'}</strong></span>
+                </div>
               </div>
             </div>
 
             {/* Board View */}
             <KanbanBoard
               jobs={filteredJobs}
+              statusFilter={statusFilter}
               onSelectJob={(id, tab = 'overview') => {
                 setSelectedJobId(id);
                 setSelectedJobTab(typeof tab === 'string' ? tab : 'overview');
@@ -261,7 +293,7 @@ export default function App() {
                   Settings
                 </h1>
                 <p style={{ fontSize: '0.84rem', color: 'var(--text-muted)', margin: '4px 0 0 0' }}>
-                  Manage your candidate profile, master resume, and portal & outreach accounts.
+                  Manage your candidate profile, master resume, and job portal credentials.
                 </p>
               </div>
 
@@ -290,7 +322,7 @@ export default function App() {
                   }}
                 >
                   <Globe size={15} />
-                  <span>Accounts & Outreach</span>
+                  <span>Portal Accounts</span>
                 </button>
               </div>
             </div>

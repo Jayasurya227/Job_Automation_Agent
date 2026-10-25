@@ -265,6 +265,7 @@ async def discover_and_ingest(
     location: Optional[str] = None,
     portals: Optional[List[str]] = None,
     results_wanted: int = 10,
+    freshness_days: int = 1,
     min_match_score: int = 75,
     max_jobs_to_process: int = 5,
 ) -> IngestionReport:
@@ -276,21 +277,24 @@ async def discover_and_ingest(
     term_str = search_term or "AI Engineer / Python"
     loc_str = location or "India / Remote"
     portal_names = ", ".join(portals) if portals else "Naukri"
+    freshness_label = f"Past {freshness_days * 24} Hours" if freshness_days == 1 else (f"Past {freshness_days} Days" if freshness_days > 0 else "All Time")
 
     emit_event("discovery", "discovery_progress", {
         "stage": "scraping",
         "search_term": term_str,
         "location": loc_str,
         "portals": portals or [],
-        "message": f"Searching {portal_names} for '{term_str}' in '{loc_str}'..."
+        "freshness": freshness_label,
+        "message": f"Searching {portal_names} for '{term_str}' in '{loc_str}' ({freshness_label})..."
     })
 
-    logger.info(f"Triggering end-to-end discovery for '{search_term or 'default'}' in '{location or 'default'}'...")
+    logger.info(f"Triggering end-to-end discovery for '{search_term or 'default'}' in '{location or 'default'}' ({freshness_label})...")
     raw_discovered = await discover_jobs(
         search_term=search_term,
         location=location,
         portals=portals,
         results_per_portal=results_wanted,
+        freshness_days=freshness_days,
         deduplicate=True,
     )
 

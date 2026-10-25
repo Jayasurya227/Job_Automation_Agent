@@ -9,7 +9,7 @@ from pathlib import Path
 
 from google.genai import types
 
-from app.config import DEFAULT_MODEL, gemini_client
+from app.config import DEFAULT_MODEL, gemini_client, BASE_DIR
 from app.utils.rate_limiter import execute_with_rate_limit
 from app.schemas.profile import CandidateProfile
 from app.schemas.match import JobMatchResult
@@ -17,6 +17,8 @@ from app.schemas.match import JobMatchResult
 def load_profile(profile_path: str = "profile.json") -> CandidateProfile:
     """Dynamically loads and validates candidate profile from disk."""
     target = Path(profile_path)
+    if not target.exists() and (BASE_DIR / profile_path).exists():
+        target = BASE_DIR / profile_path
     if not target.exists():
         raise FileNotFoundError(f"Profile not found at: {profile_path}")
     with open(target, "r", encoding="utf-8") as f:

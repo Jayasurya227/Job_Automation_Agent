@@ -20,7 +20,6 @@ const AVAILABLE_PORTALS = [
 ];
 
 export default function DiscoveryModal({ isOpen, onClose, profile, onDiscoveryComplete, addToast }) {
-  if (!isOpen) return null;
 
   const targetRoles = profile?.preferences?.target_roles || ['Junior AI Engineer', 'Python Developer'];
   const preferredLocs = profile?.preferences?.preferred_locations || ['India', 'Remote'];
@@ -29,8 +28,16 @@ export default function DiscoveryModal({ isOpen, onClose, profile, onDiscoveryCo
   const [location, setLocation] = useState(preferredLocs[0] || 'India');
   const [selectedPortals, setSelectedPortals] = useState(['naukri']);
   const [resultsWanted, setResultsWanted] = useState(4);
+  const [freshnessDays, setFreshnessDays] = useState(profile?.preferences?.freshness_days ?? 1);
   const [minMatchScore, setMinMatchScore] = useState(75);
   const [maxProcess, setMaxProcess] = useState(2);
+
+  // Sync with saved profile preferences
+  React.useEffect(() => {
+    if (profile?.preferences?.freshness_days !== undefined) {
+      setFreshnessDays(profile.preferences.freshness_days);
+    }
+  }, [profile]);
 
   const [isScanning, setIsScanning] = useState(false);
   const [report, setReport] = useState(null);
@@ -88,6 +95,7 @@ export default function DiscoveryModal({ isOpen, onClose, profile, onDiscoveryCo
         location: location,
         portals: selectedPortals,
         results_wanted: Number(resultsWanted),
+        freshness_days: Number(freshnessDays),
         min_match_score: Number(minMatchScore),
         max_process: Number(maxProcess),
       });
@@ -118,6 +126,8 @@ export default function DiscoveryModal({ isOpen, onClose, profile, onDiscoveryCo
     setIsScanning(false);
     onClose();
   };
+
+  if (!isOpen) return null;
 
   return (
     <div 
@@ -289,6 +299,30 @@ export default function DiscoveryModal({ isOpen, onClose, profile, onDiscoveryCo
                     <span>90% (Strict)</span>
                   </div>
                 </div>
+              </div>
+
+              {/* Posting Freshness (24 Hours Filter) */}
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                  <label style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <Clock size={15} color="#06b6d4" /> Posting Freshness Filter
+                  </label>
+                  <span style={{ fontSize: '0.74rem', fontWeight: 700, color: '#10b981' }}>
+                    {freshnessDays === 1 ? '⚡ 24h Filter Active' : freshnessDays === 3 ? '3 Days Active' : freshnessDays === 7 ? '7 Days Active' : 'All Postings'}
+                  </span>
+                </div>
+                <select
+                  id="discovery-freshness-select"
+                  className="form-select"
+                  value={freshnessDays}
+                  onChange={(e) => setFreshnessDays(Number(e.target.value))}
+                  style={{ width: '100%', fontSize: '0.86rem', padding: '8px 12px' }}
+                >
+                  <option value={1}>⚡ Past 24 Hours (Fastest Callbacks — Recommended)</option>
+                  <option value={3}>📅 Past 3 Days (Recent Openings)</option>
+                  <option value={7}>🗓️ Past 7 Days (Last 1 Week)</option>
+                  <option value={0}>🌐 Anytime (All Active Postings)</option>
+                </select>
               </div>
 
               {/* Portal Selection */}

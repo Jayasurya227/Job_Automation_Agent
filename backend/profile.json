@@ -11,9 +11,7 @@
   "preferences": {
     "target_roles": [
       "Junior AI Engineer",
-      "AI Engineer",
-      "Full Stack Developer",
-      "Python Developer"
+      "AI Engineer"
     ],
     "preferred_locations": [
       "Hyderabad",
@@ -28,7 +26,13 @@
       "Onsite"
     ],
     "min_expected_salary": "Negotiable / Standard Industry CTC",
-    "notice_period_days": 0
+    "notice_period_days": 0,
+    "freshness_days": 1,
+    "autopilot_enabled": false,
+    "autopilot_auto_apply_score": 80,
+    "autopilot_max_daily_apps": 12,
+    "autopilot_run_hour": 22,
+    "autopilot_run_minute": 30
   },
   "technical_skills": {
     "programming_languages": [

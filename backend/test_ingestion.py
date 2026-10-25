@@ -40,7 +40,11 @@ async def run_tests():
     # Pre-test cleanup of any leftover test jobs
     init_db = SessionLocal()
     try:
-        leftover_jobs = init_db.query(Job).filter(Job.job_url.like("%example.com/jobs/%")).all()
+        leftover_jobs = init_db.query(Job).filter(
+            (Job.job_url.like("%example.com/jobs/%")) |
+            (Job.job_url.like("%test-high-match%")) |
+            (Job.job_url.like("%test-low-match%"))
+        ).all()
         for j in leftover_jobs:
             delete_job(init_db, j.id)
         if leftover_jobs:

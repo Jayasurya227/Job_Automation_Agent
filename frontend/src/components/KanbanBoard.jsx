@@ -9,11 +9,9 @@ import {
   ChevronRight,
   Sparkles,
   Inbox,
-  Send,
   Zap,
   CheckCircle,
-  Briefcase,
-  Mail
+  Briefcase
 } from 'lucide-react';
 
 const COLUMNS = [
@@ -60,22 +58,98 @@ function getCompanyStyle(companyName = '') {
 
 export default function KanbanBoard({ 
   jobs, 
+  statusFilter = 'All',
   onSelectJob, 
   onStatusChange, 
   onDeleteJob,
   onApplyJob
 }) {
-  const getJobsByStatus = (status) => {
-    return jobs.filter((j) => {
-      if (status === 'Applied') return j.status === 'Applied';
-      return j.status !== 'Applied';
-    });
-  };
+  // Determine displayed columns based on active dropdown selection
+  let activeColumns = [];
+
+  if (statusFilter === 'All') {
+    activeColumns = [
+      {
+        id: 'Saved',
+        title: 'Discovered Jobs',
+        subtitle: 'Found & Screened by Agent',
+        color: 'var(--cyan)',
+        glow: 'rgba(6, 182, 212, 0.4)',
+        filterFn: (j) => j.status !== 'Applied' && j.status !== 'Archived',
+      },
+      {
+        id: 'Applied',
+        title: 'Applied Jobs',
+        subtitle: 'Submitted to Employer',
+        color: 'var(--emerald)',
+        glow: 'rgba(16, 185, 129, 0.4)',
+        filterFn: (j) => j.status === 'Applied',
+      },
+    ];
+  } else if (statusFilter === 'Saved') {
+    activeColumns = [
+      {
+        id: 'Saved',
+        title: '🔍 Discovered Jobs',
+        subtitle: 'Found & Screened by Agent',
+        color: 'var(--cyan)',
+        glow: 'rgba(6, 182, 212, 0.4)',
+        filterFn: (j) => j.status !== 'Applied' && j.status !== 'Archived',
+      },
+    ];
+  } else if (statusFilter === 'Ready') {
+    activeColumns = [
+      {
+        id: 'Ready',
+        title: '⭐ Ready to Review',
+        subtitle: 'High-Match Jobs Waiting for Your 1-Click Apply',
+        color: 'var(--cyan)',
+        glow: 'rgba(6, 182, 212, 0.4)',
+        filterFn: (j) => j.status === 'Ready',
+      },
+    ];
+  } else if (statusFilter === 'Applied') {
+    activeColumns = [
+      {
+        id: 'Applied',
+        title: '⚡ Applied Jobs',
+        subtitle: 'Successfully Submitted to Employer',
+        color: 'var(--emerald)',
+        glow: 'rgba(16, 185, 129, 0.4)',
+        filterFn: (j) => j.status === 'Applied',
+      },
+    ];
+  } else if (statusFilter === 'Archived') {
+    activeColumns = [
+      {
+        id: 'Archived',
+        title: '📁 Archived Jobs',
+        subtitle: 'Screened Out by Agent (< 70% match or criteria mismatch)',
+        color: 'var(--rose)',
+        glow: 'rgba(244, 63, 94, 0.4)',
+        filterFn: (j) => j.status === 'Archived',
+      },
+    ];
+  } else {
+    activeColumns = [
+      {
+        id: statusFilter,
+        title: `${statusFilter} Jobs`,
+        subtitle: `Jobs filtered by ${statusFilter}`,
+        color: 'var(--primary)',
+        glow: 'rgba(99, 102, 241, 0.4)',
+        filterFn: (j) => j.status === statusFilter,
+      },
+    ];
+  }
 
   return (
-    <div className="kanban-board-grid">
-      {COLUMNS.map((col) => {
-        const colJobs = getJobsByStatus(col.id);
+    <div 
+      className="kanban-board-grid"
+      style={activeColumns.length === 1 ? { gridTemplateColumns: '1fr', maxWidth: '850px', margin: '0 auto' } : {}}
+    >
+      {activeColumns.map((col) => {
+        const colJobs = jobs.filter(col.filterFn);
         return (
           <div
             key={col.id}
@@ -309,27 +383,6 @@ function JobCard({ job, onSelect, onStatusChange, onDelete, onApply }) {
           </span>
         )}
 
-        {job.notes && job.notes.includes('[Outreach Sent') && (
-          <span 
-            className="badge badge-emerald" 
-            onClick={(e) => {
-              e.stopPropagation();
-              onSelect('outreach');
-            }}
-            style={{ 
-              fontSize: '0.68rem', 
-              fontWeight: 600,
-              padding: '2px 7px',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '3px',
-              cursor: 'pointer'
-            }}
-            title="Click to view outreach history"
-          >
-            <Mail size={10} /> Emailed
-          </span>
-        )}
       </div>
 
       {/* Card Action Controls Footer */}
@@ -350,52 +403,40 @@ function JobCard({ job, onSelect, onStatusChange, onDelete, onApply }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0 }}>
           {job.status === 'Applied' ? (
             <span className="badge badge-emerald" style={{ fontSize: '0.7rem', padding: '3px 8px' }}>
-              <CheckCircle size={11} /> Applied
+              <CheckCircle size={11} /> Auto-Applied
+            </span>
+          ) : job.status === 'Archived' ? (
+            <span className="badge" style={{ fontSize: '0.7rem', padding: '3px 8px', background: 'rgba(244, 63, 94, 0.1)', color: 'var(--rose-light)', border: '1px solid rgba(244, 63, 94, 0.25)' }}>
+              📁 Archived
             </span>
           ) : (
             <span className="badge badge-cyan" style={{ fontSize: '0.7rem', padding: '3px 8px' }}>
-              <Zap size={11} /> Queued
+              <Zap size={11} /> Ready to Review
             </span>
           )}
         </div>
 
         {/* Action Buttons Row */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onSelect('outreach');
-            }}
-            className="btn btn-sm"
-            style={{ 
-              padding: '5px 10px', 
-              fontSize: '0.75rem',
-              fontWeight: 700,
-              borderRadius: '8px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '5px',
-              color: '#c2410c',
-              background: 'rgba(234, 88, 12, 0.12)',
-              border: '1.5px solid rgba(234, 88, 12, 0.5)',
-              boxShadow: '0 1px 3px rgba(234, 88, 12, 0.15)',
-              cursor: 'pointer',
-              transition: 'all 0.15s ease',
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = 'rgba(234, 88, 12, 0.22)';
-              e.currentTarget.style.borderColor = '#ea580c';
-              e.currentTarget.style.color = '#9a3412';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = 'rgba(234, 88, 12, 0.12)';
-              e.currentTarget.style.borderColor = 'rgba(234, 88, 12, 0.5)';
-              e.currentTarget.style.color = '#c2410c';
-            }}
-            title="Preview & send recruiter email"
-          >
-            <Mail size={13} strokeWidth={2.4} color="#ea580c" /> Email
-          </button>
+          {job.status === 'Archived' ? (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onStatusChange('Ready');
+              }}
+              className="btn btn-secondary btn-sm"
+              style={{ 
+                padding: '5px 9px', 
+                fontSize: '0.74rem',
+                fontWeight: 600,
+                borderRadius: '8px',
+                cursor: 'pointer',
+              }}
+              title="Restore to Ready queue"
+            >
+              Restore
+            </button>
+          ) : null}
 
           <button
             onClick={(e) => {

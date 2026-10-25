@@ -15,7 +15,7 @@ from typing import Dict, Any, Optional, List, Callable, TypedDict
 from pathlib import Path
 
 from dotenv import load_dotenv
-import google.generativeai as genai
+from google.genai import types as genai_types
 
 try:
     from app.config import DEFAULT_MODEL
@@ -197,7 +197,7 @@ def generate_ai_screening_answer(
     load_dotenv()
     api_key = os.getenv("GEMINI_API_KEY")
     profile = load_profile()
-    
+
     if not api_key:
         logger.warning("No GEMINI_API_KEY; returning fallback candidate answer.")
         return {
@@ -206,9 +206,20 @@ def generate_ai_screening_answer(
             "confidence": 0.5,
             "category": "General"
         }
-        
-    genai.configure(api_key=api_key)
-    
+
+    # Use the new google-genai SDK (google.generativeai is deprecated and EOL)
+    try:
+        from google import genai as new_genai
+        client = new_genai.Client(api_key=api_key)
+    except Exception as e:
+        logger.error(f"Failed to initialize Gemini client: {e}")
+        return {
+            "answer": "Yes, I have relevant hands-on engineering experience from my verified projects.",
+            "source": "fallback_error",
+            "confidence": 0.5,
+            "category": "General"
+        }
+
     system_instruction = (
         "You are representing candidate Jai in a job application screening form.\n"
         "Your goal is to provide a concise, direct, professional answer (1-3 sentences max) to the screening question.\n\n"
@@ -225,23 +236,29 @@ def generate_ai_screening_answer(
         "4. If it is a Yes/No question, start clearly with 'Yes' or 'No'.\n"
         "5. Output plain text answer only. Do NOT include markdown backticks or commentary."
     )
-    
+
     prompt = (
         f"Job Title: {job_title or 'Software / AI Engineer'}\n"
         f"Company: {company_name or 'Hiring Company'}\n"
         f"Screening Question: {question}\n\n"
         f"Please provide the direct candidate answer:"
     )
-    
+
     try:
-        model = genai.GenerativeModel(model_name=DEFAULT_MODEL, system_instruction=system_instruction)
-        response = model.generate_content(prompt)
-        ans = response.text.strip()
-        
+        response = client.models.generate_content(
+            model=DEFAULT_MODEL,
+            contents=prompt,
+            config=genai_types.GenerateContentConfig(
+                system_instruction=system_instruction,
+                temperature=0.2,
+            )
+        )
+        ans = (response.text or "").strip()
+
         # Save to SQLite memory bank for future runs
         with SessionLocal() as db:
             crud.save_qa_answer(db, question=question, answer=ans, category="AI_Generated")
-            
+
         return {
             "answer": ans,
             "source": "gemini_ai_generated",

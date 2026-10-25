@@ -45,29 +45,32 @@ from app.schemas.api import (
     SaveQARequest,
     QAItemResponse,
     DetailedAnalyticsResponse,
-    TestSMTPRequest,
-    SendColdEmailRequest,
     UpdateAccountSettingsRequest,
 )
 from app.agent.mailer import (
     load_account_settings,
     save_account_settings,
     get_masked_settings,
-    test_smtp_connection,
-    send_cold_email,
     PortalAccountConfig,
 )
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Initializes SQLite database tables and registers main event loop with EventBus."""
+    """Initializes SQLite database tables and registers main event loop with EventBus and AutoPilot."""
     init_db()
     try:
         loop = asyncio.get_running_loop()
         event_bus.set_event_loop(loop)
+        from app.agent.scheduler import autopilot_scheduler
+        autopilot_scheduler.start()
+    except Exception as e:
+        logger.warning(f"Lifespan initialization notice: {e}")
+    yield
+    try:
+        from app.agent.scheduler import autopilot_scheduler
+        autopilot_scheduler.stop()
     except Exception:
         pass
-    yield
 
 app = FastAPI(
     title="Autonomous Job Automation Agent API",
@@ -276,6 +279,7 @@ async def trigger_job_discovery(req: DiscoverJobsRequest):
             location=req.location,
             portals=req.portals,
             results_wanted=req.results_wanted,
+            freshness_days=req.freshness_days if req.freshness_days is not None else 1,
             min_match_score=req.min_match_score,
             max_jobs_to_process=req.max_process,
         )
@@ -829,54 +833,94 @@ def update_user_settings(req: UpdateAccountSettingsRequest):
     save_account_settings(settings)
     return {"status": "success", "message": "Settings updated successfully", "settings": get_masked_settings()}
 
-@app.post("/api/outreach/test-smtp", tags=["Outreach"])
-def test_outreach_smtp(req: TestSMTPRequest):
-    """Validates Gmail SMTP credentials without sending an email."""
-    success, message = test_smtp_connection(
-        host=req.host,
-        port=req.port,
-        sender_email=req.sender_email,
-        app_password=req.app_password
-    )
-    if not success:
-        raise HTTPException(status_code=400, detail=message)
-    return {"status": "success", "message": message}
 
-@app.post("/api/outreach/send-email", tags=["Outreach"])
-def deliver_cold_email(req: SendColdEmailRequest, db: DbSession):
-    """Delivers personalized cold outreach email with attached tailored PDF resume."""
-    success, result_msg = send_cold_email(
-        recipient_email=req.recipient_email,
-        subject=req.subject,
-        body_text=req.body,
-        resume_pdf_path=req.resume_pdf_path,
-        recipient_name=req.recipient_name
-    )
+# =====================================================================
+# Auto-Pilot Scheduling Endpoints
+# =====================================================================
+@app.get("/api/autopilot/status", tags=["Auto-Pilot"])
+def get_autopilot_status():
+    """Returns current operational status of the Smart Auto-Pilot scheduler."""
+    from app.agent.scheduler import autopilot_scheduler
+    return autopilot_scheduler.get_status()
 
-    if not success:
-        raise HTTPException(status_code=400, detail=result_msg)
 
-    # If linked to a job, log the outreach in application notes
-    if req.job_id:
+@app.post("/api/autopilot/run-now", tags=["Auto-Pilot"])
+async def trigger_autopilot_now():
+    """Immediately triggers an on-demand Auto-Pilot run in the background."""
+    from app.agent.scheduler import autopilot_scheduler
+    asyncio.create_task(autopilot_scheduler.execute_run(trigger_source="manual_run_now"))
+    return {"status": "started", "message": "Smart Auto-Pilot execution launched in background."}
+
+
+# =====================================================================
+# Portal Session Endpoints (Naukri Persistent Session)
+# =====================================================================
+@app.get("/api/portals/naukri/session-status", tags=["Portals"])
+def get_naukri_session_status():
+    """Checks if a valid persistent browser session exists for Naukri."""
+    import json
+    from app.config import DATA_DIR
+    session_dir = DATA_DIR / "browser_session"
+    marker_file = session_dir / "session_verified.json"
+    
+    # A true persistent session requires user verification via login_session.py
+    is_connected = marker_file.exists()
+    verified_data = {}
+    if is_connected:
         try:
-            job = crud.get_job(db=db, job_id=req.job_id)
-            if job and job.applications:
-                app_rec = job.applications[0]
-                existing_notes = app_rec.notes or ""
-                new_note = f"[Outreach Sent to {req.recipient_email} at {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}]"
-                app_rec.notes = f"{existing_notes}\n{new_note}".strip()
-                db.commit()
-        except Exception as log_err:
-            logger.warning(f"Could not record email note for job {req.job_id}: {log_err}")
-
-    settings = load_account_settings()
+            verified_data = json.loads(marker_file.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+            
     return {
-        "status": "sent",
-        "recipient": req.recipient_email,
-        "detail": result_msg,
-        "daily_sent": settings.emails_sent_today,
-        "daily_limit": settings.smtp.daily_limit,
-        "resume_attached": bool(req.resume_pdf_path)
+        "portal": "naukri",
+        "connected": is_connected,
+        "status": "connected" if is_connected else "unconfigured",
+        "session_dir": str(session_dir),
+        "verified_at": verified_data.get("verified_at"),
+        "cookie_count": verified_data.get("cookie_count", 0),
+        "message": "Naukri persistent session active (OTP verified)" if is_connected else "No active Naukri session found. Please launch session login."
     }
+
+
+@app.post("/api/portals/naukri/launch-session", tags=["Portals"])
+async def launch_naukri_session():
+    """Launches an interactive headed browser for safe one-time manual login with OTP."""
+    import subprocess
+    import sys
+    import os
+    from app.config import BASE_DIR
+
+    script = BASE_DIR / "login_session.py"
+
+    # Always use the venv Python so Playwright browsers are found correctly
+    venv_python = BASE_DIR / "venv" / "Scripts" / "python.exe"
+    python_exe = str(venv_python) if venv_python.exists() else sys.executable
+
+    # Pass current environment so Playwright can locate its installed browsers
+    env = os.environ.copy()
+
+    try:
+        if sys.platform == "win32":
+            # On Windows, wrap in cmd.exe /c start to guarantee a visible top-level interactive window
+            subprocess.Popen(
+                f'start "Naukri Safe Login Session" cmd.exe /k ""{python_exe}" "{script}" --naukri"',
+                shell=True,
+                cwd=str(BASE_DIR),
+                env=env,
+            )
+        else:
+            subprocess.Popen(
+                [python_exe, str(script), "--naukri"],
+                cwd=str(BASE_DIR),
+                env=env,
+            )
+        return {"status": "launched", "message": "Chrome session window opened. Please log into your Naukri account and press Enter in the terminal to save your session."}
+    except Exception as e:
+        logger.error(f"Failed to launch session window: {e}")
+        return {"status": "error", "message": str(e)}
+
+
+
 
 
