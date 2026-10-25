@@ -34,7 +34,6 @@ export default function TableView({
               <th style={{ padding: '12px 16px' }}>Job & Company</th>
               <th style={{ padding: '12px 16px' }}>Portal</th>
               <th style={{ padding: '12px 16px' }}>Status</th>
-              <th style={{ padding: '12px 16px' }}>Tailored Resume</th>
               <th style={{ padding: '12px 16px' }}>Added Date</th>
               <th style={{ padding: '12px 16px', textAlign: 'right' }}>Actions</th>
             </tr>
@@ -42,7 +41,7 @@ export default function TableView({
           <tbody>
             {jobs.length === 0 ? (
               <tr>
-                <td colSpan={7} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+                <td colSpan={6} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
                   No tracked jobs found matching your filters.
                 </td>
               </tr>
@@ -119,16 +118,6 @@ export default function TableView({
                       </select>
                     </td>
 
-                    {/* Tailored Resume */}
-                    <td style={{ padding: '12px 16px' }}>
-                      {job.tailored_resume_tex_path ? (
-                        <span className="badge badge-cyan" style={{ fontSize: '0.7rem' }}>
-                          <FileText size={11} /> LaTeX Ready
-                        </span>
-                      ) : (
-                        <span style={{ color: 'var(--text-dim)', fontSize: '0.75rem' }}>None</span>
-                      )}
-                    </td>
 
                     {/* Added Date */}
                     <td style={{ padding: '12px 16px', color: 'var(--text-muted)', fontSize: '0.78rem', whiteSpace: 'nowrap' }}>

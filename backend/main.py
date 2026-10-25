@@ -581,52 +581,20 @@ def download_tailored_resume_pdf(job_id: int, db: DbSession, inline: bool = Fals
             content_disposition_type="inline" if inline else "attachment"
         )
 
-    # Fallback to uploaded master resume if available
+    # Use uploaded master resume directly
     uploaded_pdf = BASE_DIR / "data" / "uploaded_resume.pdf"
     if uploaded_pdf.exists():
         return FileResponse(
             path=str(uploaded_pdf),
-            filename=f"Rayavaram_Jayasurya_Resume.pdf" if not inline else None,
+            filename="Rayavaram_Jayasurya_Resume.pdf" if not inline else None,
             media_type="application/pdf",
             content_disposition_type="inline" if inline else "attachment"
         )
 
-    # Otherwise auto-tailor now
-    try:
-        from app.agent.tailorer import tailor_resume
-        from app.schemas.match import JobMatchResult
-        ev = job.evaluation
-        skills_matched = ev.matching_skills if ev else []
-        rec: Literal["Apply", "Review", "Skip"] = "Apply"
-        if ev and ev.recommendation in ["Apply", "Review", "Skip"]:
-            rec = cast(Literal["Apply", "Review", "Skip"], ev.recommendation)
-
-        match_res = JobMatchResult(
-            job_title=job.job_title,
-            company_name=job.company_name,
-            match_score=int(ev.match_score) if ev else 85,
-            recommendation=rec,
-            matching_skills=skills_matched,
-            missing_skills=[],
-            key_strengths=[],
-            summary_reasoning="Strong match based on candidate profile and job requirements."
-        )
-        res = tailor_resume(job.job_description, match_res)
-        if res.get("pdf_path") and Path(res["pdf_path"]).exists():
-            if app_rec:
-                app_rec.tailored_resume_pdf_path = res["pdf_path"]
-                app_rec.tailored_resume_tex_path = res.get("tex_path") or ""
-                db.commit()
-            safe_title = re.sub(r'[^a-zA-Z0-9_-]', '_', job.job_title)
-            return FileResponse(
-                path=res["pdf_path"],
-                filename=f"{safe_title}_Tailored_Resume.pdf" if not inline else None,
-                media_type="application/pdf",
-                content_disposition_type="inline" if inline else "attachment"
-            )
-        raise HTTPException(status_code=500, detail="Failed to compile tailored PDF resume")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Tailoring failed: {str(e)}")
+    raise HTTPException(
+        status_code=404,
+        detail="Master resume PDF not found. Please upload your resume in the Profile tab."
+    )
 
 # =====================================================================
 # Phase 4: Assisted & Autonomous Application Workflow Endpoints

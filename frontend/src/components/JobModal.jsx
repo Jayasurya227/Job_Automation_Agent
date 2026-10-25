@@ -58,15 +58,7 @@ export default function JobModal({
       setJob(data);
       setNotesText(data.notes || '');
 
-      // Load resume if available
-      if (data.tailored_resume_tex_path) {
-        try {
-          const res = await api.getJobResume(jobId);
-          setResumeData(res);
-        } catch {
-          // resume might not be generated yet
-        }
-      }
+
     } catch (err) {
       notify('Failed to load job details: ' + err.message, 'error');
       onClose();
@@ -392,7 +384,7 @@ export default function JobModal({
                 style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '8px 16px' }}
                 onClick={() => {
                   window.open(api.downloadTailoredResumePdfUrl(job.id), '_blank');
-                  if (notify) notify('Compiling and downloading tailored PDF resume...', 'info');
+                  if (notify) notify('Opening candidate master PDF resume...', 'info');
                 }}
               >
                 <Download size={15} /> Download Resume (PDF)
