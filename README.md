@@ -1,3 +1,6 @@
+[![XERJ Corpus Hub contributor](https://xerj.org)](https://xerj.org)
+
+
 <div align="center">
 
 # 🤖 Autonomous Job Automation Agent
