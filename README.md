@@ -1,5 +1,4 @@
-[![XERJ Corpus Hub contributor](https://xerj.org)](https://xerj.org)
-
+[![XERJ Corpus Hub contributor](https://shields.io)](https://xerj.org)
 
 <div align="center">
 
