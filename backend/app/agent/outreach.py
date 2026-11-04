@@ -22,7 +22,7 @@ def generate_outreach(
     Returns an empty OutreachPackage without invoking Gemini API.
     """
     return OutreachPackage(
-        recipient_role=recipient_role,
+        target_persona=recipient_role,
         highlighted_project="",
         subject_line="",
         cold_email_body="",

@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 from typing import List
 from dotenv import load_dotenv
-from google import genai
+import anthropic
 
 # Base directories
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -21,14 +21,14 @@ load_dotenv()
 load_dotenv(BASE_DIR / ".env")
 
 # Secrets & Connections
-GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
 DATABASE_URL: str = os.getenv("DATABASE_URL", f"sqlite:///{DATA_DIR / 'jobs.db'}")
 
-if not GEMINI_API_KEY:
-    raise ValueError("GEMINI_API_KEY is not set. Please add it to backend/.env")
+if not ANTHROPIC_API_KEY:
+    raise ValueError("ANTHROPIC_API_KEY is not set. Please add it to backend/.env")
 
-# Initialize Gemini AI Client once globally (Claude Fix #1)
-gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+# Initialize the Claude client once globally
+claude_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
 # CORS Whitelist for Frontend (Vite, Localhost, Mobile preview)
 CORS_ORIGINS: List[str] = [
@@ -39,5 +39,15 @@ CORS_ORIGINS: List[str] = [
 ]
 
 # AI Generation defaults
-DEFAULT_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+DEFAULT_MODEL: str = os.getenv("CLAUDE_MODEL", "claude-haiku-5-5")
 DEFAULT_PACING_SECONDS: float = 2.5
+
+# Match-score routing (single source of truth for every module)
+# >= READY_MATCH_THRESHOLD (70%) -> Keep in system (Review/Reserve). Below 70% -> Discard immediately.
+READY_MATCH_THRESHOLD: int = 70
+# >= AUTO_APPLY_MATCH_THRESHOLD (80%) -> Autonomous 1-Click Apply
+AUTO_APPLY_MATCH_THRESHOLD: int = 80
+
+# Auto-Pilot submits matching jobs without review only when this is true.
+# Off by default: matching jobs stay 'Ready' for your one-click approval.
+AUTOPILOT_AUTO_SUBMIT: bool = os.getenv("AUTOPILOT_AUTO_SUBMIT", "true").lower() == "true"

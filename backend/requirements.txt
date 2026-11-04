@@ -1,8 +1,7 @@
 # Phase 1: AI Brain Core Dependencies
 # Pinned to stable minimum versions for reproducible builds.
 # Run `pip freeze > requirements.lock` after a verified install to snapshot exact versions.
-google-generativeai>=0.8.0,<1.0.0
-google-genai>=2.0.0
+anthropic>=1.0.0,<2.0.0
 pydantic>=2.7.0,<3.0.0
 python-dotenv>=1.0.0,<2.0.0
 

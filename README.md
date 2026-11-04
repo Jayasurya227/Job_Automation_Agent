@@ -82,15 +82,17 @@ Job_Automation_Agent/
 │   ├── app/
 │   │   ├── agent/               # Autonomous agent modules
 │   │   │   ├── applier.py       # Playwright browser automation & form filler
-│   │   │   ├── discoverer.py    # Multi-portal job scraper via JobSpy
-│   │   │   ├── mailer.py        # Gmail SMTP recruiter cold email dispatcher
+│   │   │   ├── scraper.py       # Multi-portal job scraper via JobSpy
+│   │   │   ├── ingestion.py     # Dedupe, score, and triage discovered jobs
+│   │   │   ├── scheduler.py     # Daily Auto-Pilot run (discovery + auto-apply)
+│   │   │   ├── mailer.py        # Gmail SMTP recruiter cold email (currently paused)
 │   │   │   ├── outreach.py      # AI cold email & LinkedIn note generator
 │   │   │   ├── pdf_generator.py # Dynamic LaTeX & ReportLab PDF compiler
 │   │   │   ├── qa_bank.py       # Screening questions and candidate memory bank
 │   │   │   ├── resume_parser.py # AI resume extractor and parser
 │   │   │   ├── scorer.py        # Gemini ATS evaluation and scoring
 │   │   │   ├── tailorer.py      # LaTeX resume tailoring engine
-│   │   │   └── workflow.py      # LangGraph state machine with HITL interrupt
+│   │   │   └── workflow.py      # Application workflow with a human review gate
 │   │   ├── db/                  # SQLite models, sessions, and CRUD operations
 │   │   │   ├── crud.py
 │   │   │   ├── models.py
@@ -225,10 +227,12 @@ npm run dev
 | Principle | Implementation |
 | :--- | :--- |
 | **Zero Blind Trust** | All inputs (jobs, search queries, profiles) validated with strict Pydantic v2 models. |
-| **Zero Secret Leakage** | `.env`, credentials, local SQLite databases, session cookies, and output PDFs strictly git-ignored. |
+| **Zero Secret Leakage** | `.env`, credentials, local SQLite databases, session cookies, and output PDFs strictly git-ignored. Portal passwords are never stored. |
 | **Strict Network Isolation** | FastAPI configured with explicit CORS origin constraints (`localhost:5173`, `127.0.0.1:5173`). |
-| **Human-in-the-Loop Gateway** | LangGraph pauses before final application submission, requiring explicit candidate visual approval. |
-| **Rate-Limited Cold Outreach** | Gmail SMTP limits enforced in code to protect sender reputation and prevent spam triggers. |
+| **Optional API Token** | Set `API_TOKEN` in `backend/.env` and `VITE_API_TOKEN` in `frontend/.env` to require the token on every API call. Without it the API is open on localhost and a warning is logged at startup. |
+| **Human-in-the-Loop Gateway** | Assisted mode pauses before submission and requires explicit candidate approval. Each review can be decided only once. A job is marked Applied only after a confirmed submission. |
+| **Single Match Threshold** | `READY_MATCH_THRESHOLD` in `backend/app/config.py` (default 70) controls Ready vs. Archived everywhere. |
+| **Rate-Limited Cold Outreach** | Cold email is paused in code; when re-enabled, Gmail SMTP limits are enforced in code. |
 
 ---
 

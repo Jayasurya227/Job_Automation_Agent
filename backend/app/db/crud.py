@@ -39,19 +39,37 @@ def create_job(
     return job
 
 def job_exists(db: Session, job_url: str = "", title: str = "", company: str = "") -> bool:
-    """Checks whether a job already exists in SQLite by URL or normalized (title + company)."""
-    if job_url and job_url.strip():
-        existing_url = db.query(Job.id).filter(Job.job_url == job_url.strip()).first()
-        if existing_url:
-            return True
+    """
+    Checks whether a job already exists in SQLite:
+    1. If the candidate has already APPLIED, NEVER re-discover or re-apply (permanent safety).
+    2. If previously discovered/unapplied, checks within the 30-day window to prevent duplicate listings.
+    """
+    from datetime import timedelta
+    cutoff_30d = datetime.utcnow() - timedelta(days=30)
 
+    # 1. Check by URL
+    if job_url and job_url.strip():
+        url_clean = job_url.strip()
+        matching_jobs = db.query(Job).filter(Job.job_url == url_clean).all()
+        for j in matching_jobs:
+            if any(app.status == "Applied" for app in j.applications):
+                return True  # Already applied - never duplicate
+            if j.created_at and j.created_at >= cutoff_30d:
+                return True  # Within 30 days - skip duplicate
+
+    # 2. Check by Title + Company
     if title and company:
-        existing_tc = db.query(Job.id).filter(
-            Job.job_title.ilike(title.strip()),
-            Job.company_name.ilike(company.strip())
-        ).first()
-        if existing_tc:
-            return True
+        t_clean = title.strip()
+        c_clean = company.strip()
+        matching_tc = db.query(Job).filter(
+            Job.job_title.ilike(t_clean),
+            Job.company_name.ilike(c_clean)
+        ).all()
+        for j in matching_tc:
+            if any(app.status == "Applied" for app in j.applications):
+                return True  # Already applied - never duplicate
+            if j.created_at and j.created_at >= cutoff_30d:
+                return True  # Within 30 days - skip duplicate
 
     return False
 
@@ -59,12 +77,113 @@ def get_job(db: Session, job_id: int) -> Optional[Job]:
     """Retrieves a single job with its evaluation and applications."""
     return db.query(Job).filter(Job.id == job_id).first()
 
-def list_jobs(db: Session, skip: int = 0, limit: int = 100, status: Optional[str] = None) -> List[Job]:
-    """Retrieves all jobs, optionally filtering by application pipeline status."""
+def list_jobs(
+    db: Session, 
+    skip: int = 0, 
+    limit: int = 100, 
+    status: Optional[str] = None,
+    days_limit: Optional[int] = None
+) -> List[Job]:
+    """
+    Retrieves jobs, optionally filtering by pipeline status and rolling days limit (e.g. 7-day rolling window).
+    """
     query = db.query(Job)
     if status:
         query = query.join(Job.applications).filter(Application.status == status)
+    if days_limit is not None and days_limit > 0:
+        from datetime import timedelta
+        cutoff = datetime.utcnow() - timedelta(days=days_limit)
+        # Include jobs created within rolling window OR applied within rolling window
+        query = query.outerjoin(Job.applications).filter(
+            (Job.created_at >= cutoff) | (Application.applied_at >= cutoff)
+        ).distinct()
     return query.order_by(Job.created_at.desc()).offset(skip).limit(limit).all()
+
+def get_jobs_history(
+    db: Session,
+    year: Optional[int] = None,
+    month: Optional[int] = None
+) -> dict:
+    """
+    Retrieves historical jobs grouped into Discovered and Applied for a specific month and year,
+    along with available months metadata.
+    """
+    import calendar
+    now = datetime.utcnow()
+    target_year = year if year is not None else now.year
+    target_month = month if month is not None else now.month
+
+    all_jobs = db.query(Job).order_by(Job.created_at.desc()).all()
+
+    # Extract available months from all jobs in database
+    months_map = {}
+    for j in all_jobs:
+        app_rec = j.applications[0] if j.applications else None
+        ref_date = (app_rec.applied_at if app_rec and app_rec.applied_at else j.created_at) or now
+        key = (ref_date.year, ref_date.month)
+        months_map[key] = months_map.get(key, 0) + 1
+
+    # Ensure current month is always present in available list even if 0 jobs
+    current_key = (now.year, now.month)
+    if current_key not in months_map:
+        months_map[current_key] = 0
+
+    available_months = []
+    for (y, m) in sorted(months_map.keys(), reverse=True):
+        m_name = calendar.month_name[m]
+        available_months.append({
+            "year": y,
+            "month": m,
+            "label": f"{m_name} {y}",
+            "count": months_map[(y, m)]
+        })
+
+    # Filter jobs for target_year and target_month
+    discovered_list = []
+    applied_list = []
+
+    for j in all_jobs:
+        ev = j.evaluation
+        app_rec = j.applications[0] if j.applications else None
+        is_applied = (app_rec is not None and app_rec.status == "Applied")
+
+        # Date used for grouping: applied_at for applied jobs, created_at for discovered jobs
+        job_date = (app_rec.applied_at if is_applied and app_rec.applied_at else j.created_at) or now
+
+        if job_date.year == target_year and job_date.month == target_month:
+            item = {
+                "id": j.id,
+                "job_title": j.job_title,
+                "company_name": j.company_name,
+                "location": j.location,
+                "portal_name": j.portal_name,
+                "job_url": j.job_url,
+                "salary_range": j.salary_range,
+                "match_score": ev.match_score if ev else None,
+                "recommendation": ev.recommendation if ev else None,
+                "status": app_rec.status if app_rec else "Saved",
+                "applied_at": app_rec.applied_at.isoformat() if app_rec and app_rec.applied_at else None,
+                "created_at": j.created_at.isoformat() if j.created_at else None,
+                "notes": app_rec.notes if app_rec else "",
+            }
+            if is_applied:
+                applied_list.append(item)
+            else:
+                discovered_list.append(item)
+
+    month_label = f"{calendar.month_name[target_month]} {target_year}"
+
+    return {
+        "year": target_year,
+        "month": target_month,
+        "month_name": month_label,
+        "discovered_count": len(discovered_list),
+        "applied_count": len(applied_list),
+        "total_count": len(discovered_list) + len(applied_list),
+        "discovered_jobs": discovered_list,
+        "applied_jobs": applied_list,
+        "available_months": available_months,
+    }
 
 def save_job_evaluation(db: Session, job_id: int, match: JobMatchResult) -> JobEvaluation:
     """Saves or updates the AI match evaluation for a job."""
@@ -84,6 +203,19 @@ def save_job_evaluation(db: Session, job_id: int, match: JobMatchResult) -> JobE
     db.commit()
     db.refresh(eval_record)
     return eval_record
+
+def maintain_top_active_jobs(db: Session, max_active: int = 3):
+    """
+    No-op: All high-matching jobs remain in active status ('Ready' / 'Review')
+    so that the candidate can see all opportunities and the daily quota can process them in order.
+    """
+    pass
+
+def refill_top_active_jobs(db: Session, max_active: int = 3):
+    """
+    No-op: Active jobs remain in their natural pipeline stages.
+    """
+    pass
 
 def create_or_update_application(
     db: Session,
@@ -121,6 +253,12 @@ def create_or_update_application(
 
     db.commit()
     db.refresh(app_record)
+
+    if status in ["Ready", "Saved"]:
+        maintain_top_active_jobs(db, max_active=3)
+    elif status in ["Applied", "Archived"]:
+        refill_top_active_jobs(db, max_active=3)
+
     return app_record
 
 def update_application_status(db: Session, application_id: int, new_status: str) -> Optional[Application]:
@@ -133,11 +271,19 @@ def update_application_status(db: Session, application_id: int, new_status: str)
         app_record.applied_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(app_record)
+
+    # If an application moved away from Ready, refill Top 3 from reserve
+    if new_status in ["Applied", "Archived"]:
+        refill_top_active_jobs(db, max_active=3)
+
     return app_record
 
 def update_job_status(db: Session, job_id: int, status: str) -> Application:
     """Updates or creates the application status record for a job."""
-    return create_or_update_application(db=db, job_id=job_id, status=status)
+    res = create_or_update_application(db=db, job_id=job_id, status=status)
+    if status in ["Applied", "Archived"]:
+        refill_top_active_jobs(db, max_active=3)
+    return res
 
 def delete_job(db: Session, job_id: int) -> bool:
     """Deletes a job and cascades deletion to its evaluation and application records."""
@@ -146,6 +292,7 @@ def delete_job(db: Session, job_id: int) -> bool:
         return False
     db.delete(job)
     db.commit()
+    refill_top_active_jobs(db, max_active=3)
     return True
 
 def save_qa_answer(db: Session, question: str, answer: str, category: str = "General") -> ApplicationAnswer:
@@ -239,11 +386,17 @@ def get_detailed_analytics(db: Session) -> dict:
         # Velocity check
         if app_rec and app_rec.applied_at:
             applied_time = app_rec.applied_at
+            if applied_time.tzinfo is not None:
+                local_app_time = applied_time.astimezone()
+            else:
+                local_app_time = applied_time.replace(tzinfo=timezone.utc).astimezone()
+
+            if local_app_time.date() == datetime.now().date():
+                applied_today += 1
+
             if applied_time.tzinfo is None:
                 applied_time = applied_time.replace(tzinfo=timezone.utc)
             delta = (now - applied_time).total_seconds()
-            if delta <= 86400:
-                applied_today += 1
             if delta <= 7 * 86400:
                 applied_this_week += 1
             if delta <= 30 * 86400:
@@ -341,4 +494,27 @@ def get_detailed_analytics(db: Session) -> dict:
         },
         "recent_activity": recent_activity
     }
+
+
+def get_applied_today_count(db: Session, target_date: Optional[datetime] = None) -> int:
+    """
+    Returns the total number of applications submitted today (current local calendar day since 00:00:00).
+    Resets cleanly at midnight so that each new day starts with a fresh 0 count.
+    """
+    now_local = target_date or datetime.now()
+    today_date = now_local.date()
+    count = 0
+    apps = db.query(Application).filter(Application.status == "Applied").all()
+    for app in apps:
+        if app.applied_at:
+            app_time = app.applied_at
+            if app_time.tzinfo is not None:
+                local_app_time = app_time.astimezone()
+            else:
+                local_app_time = app_time.replace(tzinfo=timezone.utc).astimezone()
+
+            if local_app_time.date() == today_date:
+                count += 1
+    return count
+
 

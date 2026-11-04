@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import Navbar from './components/Navbar';
 import KanbanBoard from './components/KanbanBoard';
 import ProfileEditor from './components/ProfileEditor';
 import AccountsSettings from './components/AccountsSettings';
+import ApplicationHistory from './components/ApplicationHistory';
 import JobModal from './components/JobModal';
 import Toast from './components/Toast';
 import AuthPage from './components/AuthPage';
@@ -14,7 +15,12 @@ import {
   RefreshCw,
   User,
   Globe,
-  Clock
+  Sparkles,
+  Loader2,
+  ChevronDown,
+  ExternalLink,
+  Clock,
+  History
 } from 'lucide-react';
 
 export default function App() {
@@ -42,7 +48,39 @@ export default function App() {
   const [selectedJobTab, setSelectedJobTab] = useState('overview');
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
+  const [isFilterOpen, setIsFilterOpen] = useState(false);
+  const filterDropdownRef = useRef(null);
+  const [isDiscovering, setIsDiscovering] = useState(false);
   const [toasts, setToasts] = useState([]);
+  const [naukriSession, setNaukriSession] = useState(null);
+  const [isReconnectingSession, setIsReconnectingSession] = useState(false);
+  const [applyingJobId, setApplyingJobId] = useState(null);
+
+  // Hourly Auto-Discovery State (9:00 AM – 9:00 PM)
+  const [autoDiscoverEnabled, setAutoDiscoverEnabled] = useState(() => {
+    try {
+      const saved = localStorage.getItem('auto_discover_enabled');
+      return saved !== null ? saved === 'true' : true;
+    } catch {
+      return true;
+    }
+  });
+  const [countdownSeconds, setCountdownSeconds] = useState(3600);
+
+  // Close custom filter dropdown when clicking outside
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (filterDropdownRef.current && !filterDropdownRef.current.contains(event.target)) {
+        setIsFilterOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('touchstart', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('touchstart', handleClickOutside);
+    };
+  }, []);
 
   const notify = useCallback((message, type = 'info') => {
     const id = Date.now() + Math.random();
@@ -76,16 +114,18 @@ export default function App() {
       await api.checkHealth();
       setBackendStatus('online');
 
-      // 2. Fetch jobs, metrics & profile in parallel
-      const [jobsData, metricsData, profileData] = await Promise.all([
+      // 2. Fetch jobs, metrics, profile & session status in parallel
+      const [jobsData, metricsData, profileData, sessionData] = await Promise.all([
         api.getJobs(),
         api.getMetrics(),
         api.getProfile().catch(() => null),
+        api.getNaukriSessionStatus().catch(() => null),
       ]);
 
       setJobs(jobsData);
       setMetrics(metricsData);
       if (profileData) setProfile(profileData);
+      if (sessionData) setNaukriSession(sessionData);
     } catch (err) {
       console.error('Data sync failed:', err);
       setBackendStatus('offline');
@@ -93,6 +133,154 @@ export default function App() {
       setLoading(false);
     }
   }, []);
+
+  // 1-Click Quick Re-Login Handler for Naukri Session
+  const handleQuickSessionLogin = useCallback(async () => {
+    try {
+      setIsReconnectingSession(true);
+      const res = await api.launchNaukriSession();
+      notify(res.message || 'Launched Chrome window! Log into Naukri and press Enter in the terminal to save your session.', 'info');
+
+      let attempts = 0;
+      const interval = setInterval(async () => {
+        attempts += 1;
+        try {
+          const statusRes = await api.getNaukriSessionStatus();
+          setNaukriSession(statusRes);
+          if (statusRes.connected || attempts >= 12) {
+            clearInterval(interval);
+            setIsReconnectingSession(false);
+            if (statusRes.connected) {
+              notify('🎉 Naukri session successfully captured and verified!', 'success');
+            }
+          }
+        } catch {
+          if (attempts >= 12) {
+            clearInterval(interval);
+            setIsReconnectingSession(false);
+          }
+        }
+      }, 4000);
+    } catch (err) {
+      setIsReconnectingSession(false);
+      notify('Failed to launch login session: ' + err.message, 'error');
+    }
+  }, [notify]);
+
+  // 1-Click Instant Autonomous Discovery (Bypasses popup modal, uses saved profile directly)
+  const handleInstantDiscover = useCallback(async (isAutoTrigger = false) => {
+    if (isDiscovering) return;
+
+    // Reset hourly countdown timer timestamp on every run (manual or auto)
+    try {
+      localStorage.setItem('last_discover_timestamp', Date.now().toString());
+    } catch {
+      // ignore
+    }
+    setCountdownSeconds(3600);
+
+    const savedRoles = profile?.preferences?.target_roles || profile?.target_roles || [];
+    const rolesToSearch = savedRoles.length > 0 ? savedRoles.slice(0, 3) : ['Junior AI Engineer'];
+    const savedLocs = profile?.preferences?.preferred_locations || profile?.target_locations || [];
+    const locsToSearch = savedLocs.length > 0 ? savedLocs.slice(0, 2) : ['Hyderabad'];
+    const freshness = profile?.preferences?.freshness_days ?? 1;
+    const minScore = profile?.preferences?.min_match_score ?? 70;
+
+    // 9-Hour Round-Robin Timeline: Even hours -> Naukri, Odd hours -> Indeed
+    const currentHour = new Date().getHours();
+    const scheduledPortal = (currentHour % 2 === 0) ? 'naukri' : 'indeed';
+    const scheduledPortalLabel = scheduledPortal === 'naukri' ? 'Naukri.com' : 'Indeed';
+
+    setIsDiscovering(true);
+    const rolesLabel = rolesToSearch.join(', ');
+    const locsLabel = locsToSearch.join(', ');
+
+    if (isAutoTrigger) {
+      notify(`⏰ Hourly Auto-Discovery: Agent is crawling fresh 24h jobs on scheduled portal: ${scheduledPortalLabel} (${rolesLabel} in ${locsLabel})...`, 'info');
+    } else {
+      notify(`🚀 Agent launched! Crawling fresh 24h jobs on scheduled portal: ${scheduledPortalLabel} across [${rolesLabel}] in [${locsLabel}]...`, 'info');
+    }
+
+    try {
+      const result = await api.discoverJobs({
+        search_terms: rolesToSearch,
+        locations: locsToSearch,
+        location: locsLabel,
+        portals: [scheduledPortal],
+        results_wanted: 8,
+        freshness_days: freshness,
+        min_match_score: minScore,
+        max_process: 10,
+      });
+
+      await loadData();
+
+      const savedCount = result?.new_jobs_saved ?? result?.high_matches_ready ?? 0;
+      const autoApplied = result?.auto_applied_count ?? 0;
+      const applyMsg = autoApplied > 0 ? ` (${autoApplied} auto-applied via 1-Click!)` : '';
+      notify(`🎉 Discovery complete on ${scheduledPortalLabel} for [${rolesLabel}] in [${locsLabel}]! ${savedCount} high matches queued${applyMsg}.`, 'success');
+    } catch (err) {
+      console.error('Instant discovery error:', err);
+      notify(`Discovery notice: ${err.message}`, 'error');
+    } finally {
+      setIsDiscovering(false);
+    }
+  }, [isDiscovering, profile, notify, loadData]);
+
+  // Precision Hourly Auto-Discovery Timer (9:00 AM – 9:00 PM Office Hours)
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const tick = () => {
+      const now = new Date();
+      const currentHour = now.getHours();
+      const isOfficeHours = currentHour >= 9 && currentHour < 21;
+
+      if (!isOfficeHours) {
+        // Outside office hours: countdown until 9:00 AM next morning
+        let nextStart = new Date(now);
+        if (currentHour >= 21) {
+          nextStart.setDate(nextStart.getDate() + 1);
+        }
+        nextStart.setHours(9, 0, 0, 0);
+        const diffSecs = Math.max(0, Math.floor((nextStart.getTime() - now.getTime()) / 1000));
+        setCountdownSeconds(diffSecs);
+        return;
+      }
+
+      // Inside Office Hours: check elapsed time since last run
+      let lastRun = 0;
+      try {
+        lastRun = parseInt(localStorage.getItem('last_discover_timestamp') || '0', 10);
+      } catch {
+        lastRun = 0;
+      }
+
+      if (!lastRun) {
+        lastRun = Date.now();
+        try {
+          localStorage.setItem('last_discover_timestamp', lastRun.toString());
+        } catch {}
+      }
+
+      const elapsedSec = Math.floor((Date.now() - lastRun) / 1000);
+      const remaining = Math.max(0, 3600 - elapsedSec);
+      setCountdownSeconds(remaining);
+
+      // Trigger if countdown reached 0, auto-discover is enabled, and not currently running
+      if (remaining <= 0 && autoDiscoverEnabled && !isDiscovering) {
+        try {
+          localStorage.setItem('last_discover_timestamp', Date.now().toString());
+        } catch {}
+        setCountdownSeconds(3600);
+        handleInstantDiscover(true);
+      }
+    };
+
+    tick();
+    const timer = setInterval(tick, 1000);
+    return () => clearInterval(timer);
+  }, [currentUser, autoDiscoverEnabled, isDiscovering, handleInstantDiscover]);
 
   useEffect(() => {
     if (!currentUser) return;
@@ -130,6 +318,67 @@ export default function App() {
     }
   };
 
+  const handle1ClickApply = async (job) => {
+    if (!job || !job.id) return;
+    if (applyingJobId) {
+      notify('Another application is currently in progress. Please wait...', 'warning');
+      return;
+    }
+
+    setApplyingJobId(job.id);
+    notify(`⚡ Starting 1-Click Apply for "${job.job_title}" at ${job.company_name}...`, 'info');
+
+    try {
+      const res = await api.triggerApply(job.id, 'autonomous', job.portal_name || 'Naukri');
+      
+      if (res.status === 'SUBMITTED') {
+        notify(`🎉 Successfully applied to "${job.job_title}" at ${job.company_name}!`, 'success');
+        setJobs((prev) =>
+          prev.map((j) => (j.id === job.id ? { ...j, status: 'Applied' } : j))
+        );
+        const newMetrics = await api.getMetrics();
+        setMetrics(newMetrics);
+      } else if (res.status === 'EXTERNAL_SITE') {
+        notify(`⚠️ "${job.job_title}" redirects to an external company site. Skipping 1-Click apply for now.`, 'warning');
+        setJobs((prev) =>
+          prev.map((j) => (j.id === job.id ? { ...j, notes: 'External Company Portal: Direct application required.' } : j))
+        );
+      } else if (res.status === 'LOGIN_REQUIRED') {
+        notify(`⚠️ Naukri session is disconnected or expired. Please re-authenticate in Settings > Portal Accounts.`, 'warning');
+      } else if (res.status === 'ALREADY_APPLIED') {
+        notify(`ℹ️ Already applied to "${job.job_title}" at ${job.company_name} on Naukri.`, 'info');
+        setJobs((prev) =>
+          prev.map((j) => (j.id === job.id ? { ...j, status: 'Applied' } : j))
+        );
+        const newMetrics = await api.getMetrics();
+        setMetrics(newMetrics);
+      } else {
+        const errorMsg = res.execution_logs?.[res.execution_logs.length - 1] || res.status || 'Application not completed';
+        notify(`Application notice: ${errorMsg}`, 'warning');
+      }
+    } catch (err) {
+      console.error('1-Click Apply error:', err);
+      notify(`1-Click Apply failed: ${err.message}`, 'error');
+    } finally {
+      setApplyingJobId(null);
+    }
+  };
+
+
+  // Hourly Office Hours calculation and countdown formatter
+  const currentHour = new Date().getHours();
+  const isOfficeHours = currentHour >= 9 && currentHour < 21;
+
+  const formatCountdown = (secs) => {
+    const m = Math.floor(secs / 60);
+    const s = secs % 60;
+    if (m >= 60) {
+      const h = Math.floor(m / 60);
+      const remM = m % 60;
+      return `${h}h ${remM}m`;
+    }
+    return `${m}m ${s < 10 ? '0' : ''}${s}s`;
+  };
 
   // Filter jobs by search term and status
   const filteredJobs = jobs.filter((job) => {
@@ -140,17 +389,27 @@ export default function App() {
 
     let matchesStatus = true;
     if (statusFilter === 'All') {
-      matchesStatus = job.status !== 'Archived';
-    } else if (statusFilter === 'Saved') {
-      matchesStatus = job.status !== 'Applied' && job.status !== 'Archived';
+      matchesStatus = true;
     } else if (statusFilter === 'Ready') {
       matchesStatus = job.status === 'Ready';
+    } else if (statusFilter === 'Applied') {
+      matchesStatus = job.status === 'Applied';
+    } else if (statusFilter === 'Archived') {
+      matchesStatus = job.status === 'Archived';
     } else {
       matchesStatus = job.status === statusFilter;
     }
 
     return matchesSearch && matchesStatus;
   });
+
+  const statusOptions = [
+    { value: 'All', label: 'All Discovered', icon: '🌐', count: jobs.filter(j => j.status !== 'Applied').length },
+    { value: 'Ready', label: 'Review (≥80%)', icon: '⭐', count: jobs.filter(j => j.status === 'Ready').length },
+    { value: 'Applied', label: 'Applied', icon: '✅', count: jobs.filter(j => j.status === 'Applied').length },
+    { value: 'Archived', label: 'Archive (70–79%)', icon: '📁', count: jobs.filter(j => j.status === 'Archived').length },
+  ];
+  const activeStatusOption = statusOptions.find(o => o.value === statusFilter) || statusOptions[0];
 
   // If user is not authenticated, show Amorphous Auth Gate
   if (!currentUser) {
@@ -206,17 +465,54 @@ export default function App() {
       <main className="main-content-layout">
         {/* TAB 1: PIPELINE BOARD */}
         {activeTab === 'pipeline' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            {/* Live Naukri Session Warning Banner if Expired or Disconnected */}
+            {naukriSession && !naukriSession.connected && (
+              <div className="naukri-session-warning-card">
+                <div className="session-warning-left">
+                  <div className="session-warning-icon">
+                    <AlertTriangle size={15} color="#b45309" />
+                  </div>
+                  <div className="session-warning-text">
+                    <strong>{naukriSession.expired ? 'Naukri Session Expired' : 'Naukri Session Disconnected'}:</strong>{' '}
+                    <span>
+                      {naukriSession.expired
+                        ? `Session expired (${naukriSession.age_days}d old). Re-authenticate to keep 1-click apply and autonomous crawl running.`
+                        : 'Connect your session once in Chrome to bypass OTP and anti-bot verification.'}
+                    </span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="session-reconnect-btn"
+                  onClick={handleQuickSessionLogin}
+                  disabled={isReconnectingSession}
+                  title="Launch 1-time Chrome window to refresh your Naukri cookies"
+                >
+                  {isReconnectingSession ? (
+                    <>
+                      <Loader2 size={12} className="spin" />
+                      <span>Opening Chrome...</span>
+                    </>
+                  ) : (
+                    <>
+                      <ExternalLink size={12} />
+                      <span>{naukriSession.expired ? 'Re-login (10s)' : 'Connect (10s)'}</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
+
             {/* Pipeline Controls Bar */}
             <div className="pipeline-controls-bar">
               {/* Search Bar */}
               <div className="controls-search-box">
                 <div style={{ position: 'relative', width: '100%' }}>
-                  <Search size={16} color="var(--text-muted)" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
+                  <Search size={14} color="var(--text-muted)" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
                   <input
                     id="search-input"
-                    className="form-input"
-                    style={{ paddingLeft: '36px' }}
+                    className="form-input search-input-styled"
                     placeholder="Search by title, company, or location..."
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
@@ -224,47 +520,133 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Status Filter & View Toggle */}
-              <div className="controls-filter-box" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <select
-                  id="status-filter-select"
-                  className="form-select"
-                  style={{ width: 'auto', fontWeight: 600, color: 'var(--text-main)' }}
-                  value={statusFilter}
-                  onChange={(e) => setStatusFilter(e.target.value)}
-                >
-                  <option value="All">🌐 All Jobs ({jobs.filter(j => j.status !== 'Archived').length})</option>
-                  <option value="Saved">🔍 Discovered Jobs ({jobs.filter(j => j.status !== 'Applied' && j.status !== 'Archived').length})</option>
-                  <option value="Ready">⭐ Ready to Review ({jobs.filter(j => j.status === 'Ready').length})</option>
-                  <option value="Applied">⚡ Applied Jobs ({jobs.filter(j => j.status === 'Applied').length})</option>
-                  <option value="Archived">📁 Archived ({jobs.filter(j => j.status === 'Archived').length})</option>
-                </select>
+              {/* Controls Actions Group */}
+              <div className="controls-actions-group">
+                {/* Custom Compact Glassmorphic Dropdown */}
+                <div className="custom-status-dropdown-wrapper" ref={filterDropdownRef}>
+                  <button
+                    type="button"
+                    id="status-filter-select"
+                    className="custom-status-dropdown-trigger"
+                    onClick={() => setIsFilterOpen(!isFilterOpen)}
+                    aria-label="Filter jobs by status"
+                  >
+                    <span className="dropdown-trigger-content">
+                      <span>{activeStatusOption.icon}</span>
+                      <span>{activeStatusOption.label} ({activeStatusOption.count})</span>
+                    </span>
+                    <ChevronDown 
+                      size={11} 
+                      color="var(--text-muted)"
+                      style={{
+                        transform: isFilterOpen ? 'rotate(180deg)' : 'rotate(0deg)',
+                        transition: 'transform 0.2s ease',
+                        flexShrink: 0
+                      }} 
+                    />
+                  </button>
 
-                {/* Live Freshness Rule Badge */}
-                <div 
-                  id="active-freshness-rule-badge"
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                    background: 'rgba(6, 182, 212, 0.08)',
-                    border: '1px solid rgba(6, 182, 212, 0.25)',
-                    padding: '6px 12px',
-                    borderRadius: '8px',
-                    fontSize: '0.78rem',
-                    color: 'var(--cyan-light)',
-                    whiteSpace: 'nowrap',
-                    cursor: 'pointer'
-                  }}
-                  onClick={() => {
-                    setActiveTab('settings');
-                    setSettingsTab('profile');
-                  }}
-                  title="Click to customize your Default Job Freshness Rule in Settings"
-                >
-                  <Clock size={13} color="#06b6d4" />
-                  <span>Rule: <strong>{profile?.preferences?.freshness_days === 1 || profile?.preferences?.freshness_days === undefined ? '⚡ Last 24 Hours' : profile?.preferences?.freshness_days === 3 ? 'Last 3 Days' : profile?.preferences?.freshness_days === 7 ? 'Last 7 Days' : 'Anytime'}</strong></span>
+                  {isFilterOpen && (
+                    <div className="custom-status-dropdown-menu">
+                      {statusOptions.map((opt) => (
+                        <button
+                          key={opt.value}
+                          type="button"
+                          className={`custom-status-dropdown-item ${statusFilter === opt.value ? 'active' : ''}`}
+                          onClick={() => {
+                            setStatusFilter(opt.value);
+                            setIsFilterOpen(false);
+                          }}
+                        >
+                          <span className="dropdown-item-left">
+                            <span className="dropdown-item-icon">{opt.icon}</span>
+                            <span className="dropdown-item-label">{opt.label}</span>
+                          </span>
+                          <span className="dropdown-item-count">{opt.count}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
+
+                {/* Hourly Auto-Discovery Live Status & Quick Pause/Resume Pill */}
+                <button
+                  type="button"
+                  id="auto-discover-status-pill"
+                  className={`auto-discover-status-pill ${
+                    isDiscovering
+                      ? 'state-discovering'
+                      : !autoDiscoverEnabled
+                      ? 'state-paused'
+                      : isOfficeHours
+                      ? 'state-active'
+                      : 'state-standby'
+                  }`}
+                  onClick={() => {
+                    const nextVal = !autoDiscoverEnabled;
+                    setAutoDiscoverEnabled(nextVal);
+                    try { localStorage.setItem('auto_discover_enabled', nextVal.toString()); } catch {}
+                    notify(nextVal ? '⏰ Hourly Auto-Discovery enabled (9:00 AM – 9:00 PM)' : '⏸️ Hourly Auto-Discovery paused', 'info');
+                  }}
+                  title={autoDiscoverEnabled ? "Auto-Discovery is active every 1 hour (9 AM - 9 PM). Click to pause." : "Auto-Discovery is paused. Click to resume."}
+                >
+                  <div className="pill-content-left">
+                    <Clock size={13} className={isDiscovering ? 'spin' : ''} />
+                    <span className="pill-title">
+                      {isDiscovering
+                        ? 'Auto-Crawl:'
+                        : !autoDiscoverEnabled
+                        ? 'Auto-Discovery:'
+                        : isOfficeHours
+                        ? 'Next Auto:'
+                        : 'Standby:'}
+                    </span>
+                  </div>
+                  <div className="pill-content-right">
+                    <span className="pill-timer-badge">
+                      {isDiscovering ? (
+                        'Searching...'
+                      ) : !autoDiscoverEnabled ? (
+                        'PAUSED'
+                      ) : isOfficeHours ? (
+                        formatCountdown(countdownSeconds)
+                      ) : (
+                        `Resumes in ${formatCountdown(countdownSeconds)}`
+                      )}
+                    </span>
+                    <span className="pill-status-tag">
+                      {autoDiscoverEnabled ? (isOfficeHours ? 'ON' : 'SLEEP') : 'OFF'}
+                    </span>
+                  </div>
+                </button>
+
+                {/* 1-Click Instant Autonomous Discovery Trigger */}
+                <button
+                  id="trigger-discovery-btn"
+                  className="btn btn-primary controls-discover-btn"
+                  onClick={() => handleInstantDiscover(false)}
+                  disabled={isDiscovering}
+                  style={{
+                    opacity: isDiscovering ? 0.85 : 1,
+                    cursor: isDiscovering ? 'wait' : 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px'
+                  }}
+                  title="Discover fresh 24h jobs now, or wait for the hourly auto-tap"
+                >
+                  {isDiscovering ? (
+                    <>
+                      <Loader2 size={13} className="spin" />
+                      <span>Searching...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles size={13} />
+                      <span>Discover Jobs</span>
+                    </>
+                  )}
+                </button>
               </div>
             </div>
 
@@ -278,6 +660,8 @@ export default function App() {
               }}
               onStatusChange={handleStatusChange}
               onDeleteJob={handleDeleteJob}
+              onApplyJob={handle1ClickApply}
+              applyingJobId={applyingJobId}
             />
           </div>
         )}
@@ -288,10 +672,27 @@ export default function App() {
           <div style={{ maxWidth: '900px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '20px' }}>
             {/* Unified Settings Header & Navigation Toggle */}
             <div className="settings-header-wrapper">
-              <div>
-                <h1 style={{ fontSize: '1.45rem', fontWeight: 800, color: 'var(--text-main)', letterSpacing: '-0.02em', margin: 0 }}>
-                  Settings
-                </h1>
+              <div className="settings-title-section">
+                <div className="settings-title-row">
+                  <h1 style={{ fontSize: '1.45rem', fontWeight: 800, color: 'var(--text-main)', letterSpacing: '-0.02em', margin: 0 }}>
+                    Settings
+                  </h1>
+                  {/* Mobile-only Application History pill button beside Settings */}
+                  <button
+                    type="button"
+                    id="settings-tab-history-mobile-btn"
+                    className="settings-history-mobile-btn"
+                    onClick={() => setSettingsTab('history')}
+                    style={{
+                      background: settingsTab === 'history' ? 'var(--primary)' : 'rgba(255, 255, 255, 0.85)',
+                      color: settingsTab === 'history' ? '#ffffff' : 'var(--text-main)',
+                      border: settingsTab === 'history' ? '1px solid var(--primary)' : '1px solid var(--border-card)',
+                    }}
+                  >
+                    <History size={13} />
+                    <span>Application History</span>
+                  </button>
+                </div>
                 <p style={{ fontSize: '0.84rem', color: 'var(--text-muted)', margin: '4px 0 0 0' }}>
                   Manage your candidate profile, master resume, and job portal credentials.
                 </p>
@@ -324,6 +725,20 @@ export default function App() {
                   <Globe size={15} />
                   <span>Portal Accounts</span>
                 </button>
+
+                {/* Laptop-only 3rd tab in the unified group */}
+                <button
+                  id="settings-tab-history-btn"
+                  className="settings-subtab-btn settings-subtab-history-desktop"
+                  onClick={() => setSettingsTab('history')}
+                  style={{
+                    background: settingsTab === 'history' ? 'var(--primary)' : 'transparent',
+                    color: settingsTab === 'history' ? '#ffffff' : 'var(--text-secondary)',
+                  }}
+                >
+                  <History size={15} />
+                  <span>Application History</span>
+                </button>
               </div>
             </div>
 
@@ -334,8 +749,16 @@ export default function App() {
                 notify={notify}
                 onProfileUpdated={(updated) => setProfile(updated)}
               />
-            ) : (
+            ) : settingsTab === 'naukri' ? (
               <AccountsSettings notify={notify} />
+            ) : (
+              <ApplicationHistory
+                notify={notify}
+                onSelectJob={(jobId) => {
+                  setSelectedJobId(jobId);
+                  setSelectedJobTab('analysis');
+                }}
+              />
             )}
           </div>
         )}
@@ -350,6 +773,8 @@ export default function App() {
           onStatusChange={handleStatusChange}
           onDelete={handleDeleteJob}
           notify={notify}
+          onApply={handle1ClickApply}
+          isApplying={applyingJobId === selectedJobId}
         />
       )}
 

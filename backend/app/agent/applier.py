@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 from playwright.sync_api import sync_playwright, Page
 
 try:
-    from app.config import DATA_DIR
+    from app.config import DATA_DIR, OUTPUT_DIR
     from app.agent.scorer import load_profile
     from app.agent.qa_bank import get_or_generate_answer
     from app.agent.stealth import (
@@ -30,7 +30,7 @@ try:
         check_bot_challenge,
     )
 except ImportError:
-    from ..config import DATA_DIR
+    from ..config import DATA_DIR, OUTPUT_DIR
     from .scorer import load_profile
     from .qa_bank import get_or_generate_answer
     from .stealth import (
@@ -43,7 +43,8 @@ except ImportError:
 
 logger = logging.getLogger("applier")
 
-SNAPSHOT_DIR = Path("output/snapshots")
+# Snapshots live under the backend's output dir (served by main.py at /output), not the process CWD
+SNAPSHOT_DIR = OUTPUT_DIR / "snapshots"
 SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -76,6 +77,35 @@ class EasyApplyFiller:
     def __init__(self, headless: bool = True):
         self.headless = headless
         self.profile = load_profile()
+        self.strict = False
+        self.unanswered: List[str] = []
+        self.current_job_title = ""
+        self.current_company_name = ""
+
+    def _lookup_answer(
+        self,
+        label_text: str,
+        allow_ai: bool = True,
+        field_type: str = "text",
+        options: Optional[List[str]] = None,
+    ) -> Optional[str]:
+        """
+        Answer from the Q&A bank / profile backed by Claude Haiku Brain.
+        Screening questions are dynamically resolved with Claude Haiku from profile.json.
+        """
+        ans = get_or_generate_answer(
+            question=label_text,
+            job_title=getattr(self, "current_job_title", ""),
+            company_name=getattr(self, "current_company_name", ""),
+            field_type=field_type,
+            options=options,
+            allow_ai_generation=True,
+            verified_only=False,
+        )
+        if ans is None:
+            self.unanswered.append(label_text)
+            return None
+        return str(ans.get("answer", ""))
 
     def _resolve_candidate_value(self, label_text: str, input_name: str = "") -> Tuple[str, str]:
         """
@@ -111,14 +141,14 @@ class EasyApplyFiller:
 
         # Experience & Salary numbers
         if re.search(r"(years.*experience|experience.*years)", combined):
-            ans = get_or_generate_answer(label_text, allow_ai_generation=False)
-            return str(ans.get("answer", "1")), "experience"
+            ans = self._lookup_answer(label_text, allow_ai=True, field_type="number")
+            return ("" if ans is None else ans), ("unanswered" if ans is None else "experience")
         if re.search(r"(expected\s*(ctc|salary)|salary\s*expectation)", combined):
             return self.profile.preferences.min_expected_salary or "Negotiable", "salary"
 
-        # General / Screening questions -> Consult Q&A Bank
-        ans_obj = get_or_generate_answer(label_text, allow_ai_generation=True)
-        return str(ans_obj.get("answer", "Yes")), "screening"
+        # General / Screening questions -> Consult Q&A Bank with Claude Brain
+        ans = self._lookup_answer(label_text, allow_ai=True, field_type="text")
+        return ("" if ans is None else ans), ("unanswered" if ans is None else "screening")
 
     def fill_visible_step(self, page: Page, resume_path: Optional[str] = None) -> List[FieldMatchResult]:
         """
@@ -150,6 +180,8 @@ class EasyApplyFiller:
                     label_text = placeholder or inp_name
 
                 val_to_fill, f_type = self._resolve_candidate_value(label_text, inp_name)
+                if f_type == "unanswered":
+                    continue
                 # Humanized typing cadence for inputs
                 try:
                     inp.click()
@@ -189,8 +221,9 @@ class EasyApplyFiller:
                 if not lbl_text:
                     lbl_text = ta.get_attribute("placeholder") or ta_name or "Why are you interested in this role?"
 
-                ans_obj = get_or_generate_answer(lbl_text, allow_ai_generation=True)
-                val_to_fill = str(ans_obj.get("answer", "I am strongly interested in contributing my software skills."))
+                val_to_fill = self._lookup_answer(lbl_text, allow_ai=True)
+                if val_to_fill is None:
+                    continue
                 
                 # Human pause & fill simulation for detailed answers
                 try:
@@ -228,9 +261,11 @@ class EasyApplyFiller:
                 options = sel.query_selector_all("option")
                 opt_texts = [o.inner_text().strip() for o in options if o.get_attribute("value")]
                 
-                # Match against Q&A bank
-                qa_res = get_or_generate_answer(lbl_text, allow_ai_generation=False)
-                target_ans = qa_res.get("answer", "").lower()
+                # Match against Q&A bank with Claude Haiku Brain
+                qa_answer = self._lookup_answer(lbl_text, allow_ai=True, field_type="select", options=opt_texts)
+                if qa_answer is None:
+                    continue
+                target_ans = qa_answer.lower()
                 
                 # Find best matching option
                 chosen_opt = None
@@ -279,11 +314,21 @@ class EasyApplyFiller:
                 if not group_lbl:
                     group_lbl = r_name
 
-                ans_obj = get_or_generate_answer(group_lbl, allow_ai_generation=False)
-                desired_val = str(ans_obj.get("answer", "Yes")).lower()
+                all_radios = page.query_selector_all(f"input[type='radio'][name='{r_name}']:visible")
+                radio_options = []
+                for rad in all_radios:
+                    rad_id = rad.get_attribute("id") or ""
+                    lbl_for_rad = page.query_selector(f"label[for='{rad_id}']")
+                    rad_text = lbl_for_rad.inner_text().strip() if lbl_for_rad else (rad.get_attribute("value") or "")
+                    if rad_text:
+                        radio_options.append(rad_text)
+
+                answer = self._lookup_answer(group_lbl, allow_ai=True, field_type="radio", options=radio_options)
+                if answer is None:
+                    continue
+                desired_val = answer.lower()
 
                 # Find radio options for this group
-                all_radios = page.query_selector_all(f"input[type='radio'][name='{r_name}']:visible")
                 selected_val = ""
                 for rad in all_radios:
                     val = (rad.get_attribute("value") or "").lower()
@@ -314,21 +359,11 @@ class EasyApplyFiller:
         file_inputs = page.query_selector_all("input[type='file']:visible, input[type='file']")
         for fi in file_inputs:
             try:
-                # Resolve resume file path
-                target_file = None
-                if resume_path and Path(resume_path).exists():
-                    target_file = str(Path(resume_path).resolve())
-                else:
-                    # Check default resumes
-                    candidate_resumes = list(Path("output/resumes").glob("*.tex")) + list(Path("output/resumes").glob("*.pdf"))
-                    if candidate_resumes:
-                        target_file = str(candidate_resumes[0].resolve())
-                    else:
-                        # Fallback dummy resume file for testing
-                        dummy_res = DATA_DIR / "candidate_resume.pdf"
-                        if not dummy_res.exists():
-                            dummy_res.write_bytes(b"%PDF-1.4 Mock Candidate Resume")
-                        target_file = str(dummy_res.resolve())
+                # Only ever upload the candidate's real resume. No placeholder fallback.
+                if not resume_path or not Path(resume_path).exists():
+                    logger.warning("No resume PDF available; skipping file upload field.")
+                    continue
+                target_file = str(Path(resume_path).resolve())
 
                 fi.set_input_files(target_file)
                 filled_records.append(FieldMatchResult(
@@ -415,17 +450,12 @@ class EasyApplyFiller:
             page.wait_for_timeout(random.randint(1800, 2500))
         except Exception as nav_err:
             logger.error(f"[{tid}] Failed to reach Naukri listing: {nav_err}")
-            try:
-                page.screenshot(path=str(snapshot_file), full_page=True)
-            except Exception:
-                pass
             context.close()
             return FormFillResult(
                 status="NAVIGATION_FAILED",
                 thread_id=tid,
                 job_title=job_title,
                 company_name=company_name,
-                snapshot_path=str(snapshot_file) if snapshot_file.exists() else None,
                 error_message=f"Live Naukri navigation error: {str(nav_err)}"
             )
 
@@ -433,14 +463,12 @@ class EasyApplyFiller:
         challenge = check_bot_challenge(page)
         if challenge:
             logger.warning(f"[{tid}] Naukri bot challenge detected: {challenge}")
-            page.screenshot(path=str(snapshot_file), full_page=True)
             context.close()
             return FormFillResult(
                 status="BOT_CHALLENGE",
                 thread_id=tid,
                 job_title=job_title,
                 company_name=company_name,
-                snapshot_path=str(snapshot_file),
                 error_message=f"Naukri verification required: {challenge}"
             )
 
@@ -455,43 +483,37 @@ class EasyApplyFiller:
             elem = page.query_selector(sel)
             if elem and elem.is_visible():
                 logger.info(f"[{tid}] Job already applied on Naukri.")
-                page.screenshot(path=str(confirmed_snapshot_file), full_page=True)
                 context.close()
                 return FormFillResult(
                     status="SUBMITTED",
                     thread_id=tid,
                     job_title=job_title,
                     company_name=company_name,
-                    confirmation_snapshot_path=str(confirmed_snapshot_file),
                     error_message="Already marked as applied on candidate Naukri account."
                 )
 
         # 3. Check if Login is Required (Session missing/expired)
         if page.query_selector("a#login_Layer:visible, .login-btn:visible, a:has-text('Login to apply'):visible"):
             logger.warning(f"[{tid}] Naukri session not detected. Login required.")
-            page.screenshot(path=str(snapshot_file), full_page=True)
             context.close()
             return FormFillResult(
                 status="LOGIN_REQUIRED",
                 thread_id=tid,
                 job_title=job_title,
                 company_name=company_name,
-                snapshot_path=str(snapshot_file),
                 error_message="Naukri session not authenticated. Please click 'Connect Naukri' in Settings to log in."
             )
 
         # 4. External Company Site Check
         company_site_btn = page.query_selector("button:has-text('Apply on company site'), a:has-text('Apply on company site'), .company-site-button")
         if company_site_btn and company_site_btn.is_visible():
-            logger.info(f"[{tid}] Naukri posting redirects to external company portal.")
-            page.screenshot(path=str(snapshot_file), full_page=True)
+            logger.info(f"[{tid}] Naukri posting redirects to external company portal. Skipping 1-Click apply.")
             context.close()
             return FormFillResult(
                 status="EXTERNAL_SITE",
                 thread_id=tid,
                 job_title=job_title,
                 company_name=company_name,
-                snapshot_path=str(snapshot_file),
                 error_message="Listing redirects to external employer ATS portal."
             )
 
@@ -502,6 +524,11 @@ class EasyApplyFiller:
             ".apply-button:visible",
             "button:has-text('Apply on Naukri'):visible",
             "button:has-text('Apply'):visible",
+            "a#apply-button:visible",
+            "a.apply-button:visible",
+            "a:has-text('Apply on Naukri'):visible",
+            "a:has-text('Apply'):visible",
+            "button:has-text('I am interested'):visible",
         ]
         apply_btn = None
         apply_sel_used = None
@@ -514,19 +541,14 @@ class EasyApplyFiller:
 
         if not apply_btn:
             logger.warning(f"[{tid}] Could not find active Apply button on Naukri.")
-            page.screenshot(path=str(snapshot_file), full_page=True)
             context.close()
             return FormFillResult(
                 status="NO_APPLY_BUTTON",
                 thread_id=tid,
                 job_title=job_title,
                 company_name=company_name,
-                snapshot_path=str(snapshot_file),
                 error_message="Active Apply button not found on Naukri job card."
             )
-
-        # Pre-apply snapshot for Assisted Review Gateway
-        page.screenshot(path=str(snapshot_file), full_page=True)
 
         if not auto_submit:
             context.close()
@@ -535,7 +557,6 @@ class EasyApplyFiller:
                 thread_id=tid,
                 job_title=job_title,
                 company_name=company_name,
-                snapshot_path=str(snapshot_file),
                 steps_traversed=1
             )
 
@@ -567,8 +588,6 @@ class EasyApplyFiller:
             except Exception as drawer_err:
                 logger.warning(f"[{tid}] Notice handling questionnaire drawer: {drawer_err}")
 
-        # Final Confirmation Snapshot
-        page.screenshot(path=str(confirmed_snapshot_file), full_page=True)
         context.close()
         logger.info(f"[{tid}] Naukri application submitted successfully.")
 
@@ -577,9 +596,341 @@ class EasyApplyFiller:
             thread_id=tid,
             job_title=job_title,
             company_name=company_name,
-            snapshot_path=str(snapshot_file),
-            confirmation_snapshot_path=str(confirmed_snapshot_file),
             steps_traversed=1
+        )
+
+    def _apply_indeed_live(
+        self,
+        page: Page,
+        context: Any,
+        target_url: str,
+        job_title: str,
+        company_name: str,
+        resume_path: Optional[str],
+        tid: str,
+        snapshot_file: Path,
+        confirmed_snapshot_file: Path,
+        auto_submit: bool = False,
+    ) -> FormFillResult:
+        """
+        Specialized live Indeed applicant engine.
+        Inherits authenticated browser session cookies from backend/data/indeed_session/.
+        Handles Already Applied, Login Required, Company Site Redirection, and multi-step Easily Apply modals.
+        """
+        logger.info(f"[{tid}] Navigating to live Indeed posting: {target_url}")
+        try:
+            page.goto(target_url, timeout=30000, wait_until="domcontentloaded")
+            page.wait_for_timeout(random.randint(2000, 3000))
+        except Exception as nav_err:
+            logger.error(f"[{tid}] Failed to reach Indeed listing: {nav_err}")
+            context.close()
+            return FormFillResult(
+                status="NAVIGATION_FAILED",
+                thread_id=tid,
+                job_title=job_title,
+                company_name=company_name,
+                error_message=f"Live Indeed navigation error: {str(nav_err)}"
+            )
+
+        # 1. Anti-Bot Challenge Check
+        challenge = check_bot_challenge(page)
+        if challenge:
+            logger.warning(f"[{tid}] Indeed bot challenge detected: {challenge}")
+            context.close()
+            return FormFillResult(
+                status="BOT_CHALLENGE",
+                thread_id=tid,
+                job_title=job_title,
+                company_name=company_name,
+                error_message=f"Indeed verification required: {challenge}"
+            )
+
+        # 2. Already Applied Check
+        already_applied_selectors = [
+            "[data-testid='applied-badge']",
+            "button:has-text('Applied')",
+            "span:has-text('Applied')",
+            ".ia-AppliedMessage",
+            "div:has-text('You have applied to this job')",
+            "div:has-text('Application submitted')",
+        ]
+        for sel in already_applied_selectors:
+            elem = page.query_selector(sel)
+            if elem and elem.is_visible():
+                logger.info(f"[{tid}] Job already applied on Indeed.")
+                context.close()
+                return FormFillResult(
+                    status="SUBMITTED",
+                    thread_id=tid,
+                    job_title=job_title,
+                    company_name=company_name,
+                    error_message="Already marked as applied on candidate Indeed account."
+                )
+
+        # 3. Check if Login is Required (Session missing/expired)
+        if page.query_selector(".ia-SignInRequired:visible, div:has-text('Sign in to apply'):visible"):
+            logger.warning(f"[{tid}] Indeed session disconnected. Login required.")
+            context.close()
+            return FormFillResult(
+                status="LOGIN_REQUIRED",
+                thread_id=tid,
+                job_title=job_title,
+                company_name=company_name,
+                error_message="Indeed session disconnected. Please click 'Launch Safe Login Session' in Settings."
+            )
+
+        # 4. External Company Site Check
+        company_site_btn = page.query_selector(
+            "button:has-text('Apply on company site'):visible, "
+            "a:has-text('Apply on company site'):visible, "
+            "button:has-text('Apply on employer site'):visible, "
+            "a:has-text('Apply on employer site'):visible"
+        )
+        if company_site_btn and not page.query_selector("#indeedApplyButton:visible, button:has-text('Easily apply'):visible, button:has-text('Apply now'):visible"):
+            logger.info(f"[{tid}] Indeed posting redirects to external company portal. Skipping 1-Click apply.")
+            context.close()
+            return FormFillResult(
+                status="EXTERNAL_SITE",
+                thread_id=tid,
+                job_title=job_title,
+                company_name=company_name,
+                error_message="Listing redirects to external employer ATS portal."
+            )
+
+        # 5. Locate 1-Click "Apply now" / "Easily apply" button
+        apply_selectors = [
+            "button#indeedApplyButton:visible",
+            "button.ia-IndeedApplyButton:visible",
+            "[data-testid='indeedApplyButton']:visible",
+            "button:has-text('Easily apply'):visible",
+            "button:has-text('Apply now'):visible",
+            "a#indeedApplyButton:visible",
+            "a:has-text('Easily apply'):visible",
+            "a:has-text('Apply now'):visible",
+        ]
+        apply_btn = None
+        apply_sel_used = None
+        for sel in apply_selectors:
+            elem = page.query_selector(sel)
+            if elem and elem.is_visible():
+                apply_btn = elem
+                apply_sel_used = sel
+                break
+
+        if not apply_btn:
+            logger.warning(f"[{tid}] Could not find active 'Easily Apply' button on Indeed.")
+            context.close()
+            return FormFillResult(
+                status="NO_APPLY_BUTTON",
+                thread_id=tid,
+                job_title=job_title,
+                company_name=company_name,
+                error_message="Active 'Easily Apply' button not found on Indeed job card."
+            )
+
+        if not auto_submit:
+            try:
+                page.screenshot(path=str(snapshot_file), full_page=False)
+            except Exception:
+                pass
+            context.close()
+            return FormFillResult(
+                status="READY_FOR_REVIEW",
+                thread_id=tid,
+                job_title=job_title,
+                company_name=company_name,
+                snapshot_path=str(snapshot_file),
+                steps_traversed=1
+            )
+
+        # 6. Execute Click on "Easily Apply" & Handle Multi-Step Modal
+        logger.info(f"[{tid}] Clicking Indeed 'Easily Apply' button using selector: {apply_sel_used}")
+        try:
+            HumanInteractionEngine.human_click_sync(page, apply_sel_used)
+        except Exception:
+            apply_btn.click()
+
+        page.wait_for_timeout(random.randint(2500, 3500))
+
+        # Indeed application modal stepper loop (max 7 steps: Contact -> Resume -> Q&A -> Review -> Submit)
+        step_idx = 0
+        filled_fields: List[FieldMatchResult] = []
+        p_info = self.profile.personal_info
+        p_name = p_info.name or "Candidate"
+        p_email = p_info.email or ""
+        p_phone = p_info.phone or ""
+        p_city = p_info.location if isinstance(p_info.location, str) and p_info.location else "Hyderabad"
+
+        while step_idx < 7:
+            step_idx += 1
+            page.wait_for_timeout(random.randint(1200, 2000))
+
+            # A. Fill contact inputs if present
+            name_input = page.query_selector("input[id*='name']:visible, input[name*='name']:visible")
+            if name_input and not name_input.input_value():
+                name_input.fill(p_name)
+                filled_fields.append(FieldMatchResult(field_name="Full Name", field_type="text", value_filled=p_name, selector_used="name"))
+
+            phone_input = page.query_selector("input[type='tel']:visible, input[id*='phone']:visible, input[name*='phone']:visible")
+            if phone_input and not phone_input.input_value():
+                phone_input.fill(p_phone)
+                filled_fields.append(FieldMatchResult(field_name="Phone", field_type="tel", value_filled=p_phone, selector_used="phone"))
+
+            city_input = page.query_selector("input[id*='location']:visible, input[name*='city']:visible, input[id*='city']:visible")
+            if city_input and not city_input.input_value():
+                city_input.fill(p_city)
+                filled_fields.append(FieldMatchResult(field_name="City", field_type="text", value_filled=p_city, selector_used="city"))
+
+            # B. Resume Selection & Upload
+            resume_radios = page.query_selector_all("input[type='radio'][name*='resume']:visible, [data-testid*='resume-radio']:visible")
+            if resume_radios and not any(r.is_checked() for r in resume_radios):
+                try:
+                    resume_radios[0].click()
+                    filled_fields.append(FieldMatchResult(field_name="Saved Resume", field_type="radio", value_filled="Selected default resume", selector_used="resume-radio"))
+                except Exception:
+                    pass
+
+            file_input = page.query_selector("input[type='file']")
+            if file_input and resume_path and Path(resume_path).exists():
+                try:
+                    file_input.set_input_files(resume_path)
+                    logger.info(f"[{tid}] Attached tailored resume: {resume_path}")
+                    page.wait_for_timeout(1500)
+                    filled_fields.append(FieldMatchResult(field_name="Resume Upload", field_type="file", value_filled=Path(resume_path).name, selector_used="input[type='file']"))
+                except Exception as file_err:
+                    logger.debug(f"[{tid}] Resume upload notice: {file_err}")
+
+            # C. Dynamic Screening Questions Q&A (Grounded strictly in profile.json / Claude Haiku Brain)
+            question_containers = page.query_selector_all(
+                ".ia-Questions-item, fieldset, .ia-BasePage-section, [data-testid*='question'], .jobsearch-FormQuestion"
+            )
+            for q_elem in question_containers:
+                label_elem = q_elem.query_selector("legend, label, .ia-Questions-item-label, [data-testid*='label']")
+                if not label_elem:
+                    continue
+                q_text = (label_elem.inner_text() or "").strip()
+                if not q_text or len(q_text) < 3:
+                    continue
+
+                # 1. Check select dropdowns
+                select_elem = q_elem.query_selector("select:visible")
+                if select_elem:
+                    options = select_elem.query_selector_all("option")
+                    opt_texts = [o.inner_text().strip() for o in options if o.get_attribute("value")]
+                    ans = self._lookup_answer(q_text, allow_ai=True, field_type="select", options=opt_texts) or (opt_texts[0] if opt_texts else "")
+                    target_ans = ans.lower()
+                    for opt in options:
+                        t = (opt.inner_text() or "").strip().lower()
+                        val = opt.get_attribute("value")
+                        if target_ans in t or t in target_ans:
+                            if val:
+                                select_elem.select_option(value=val)
+                                filled_fields.append(FieldMatchResult(field_name=q_text[:40], field_type="select", value_filled=t, selector_used="select"))
+                                break
+                    continue
+
+                # 2. Check radio buttons
+                radio_btns = q_elem.query_selector_all("input[type='radio']:visible")
+                if radio_btns:
+                    radio_options = []
+                    for rb in radio_btns:
+                        rb_id = rb.get_attribute("id") or ""
+                        lbl_for_rb = page.query_selector(f"label[for='{rb_id}']")
+                        t = lbl_for_rb.inner_text().strip() if lbl_for_rb else (rb.get_attribute("value") or "")
+                        if t:
+                            radio_options.append(t)
+                    ans = self._lookup_answer(q_text, allow_ai=True, field_type="radio", options=radio_options) or "Yes"
+                    desired = ans.lower()
+                    for rb in radio_btns:
+                        rb_id = rb.get_attribute("id") or ""
+                        lbl_for_rb = page.query_selector(f"label[for='{rb_id}']")
+                        val = (rb.get_attribute("value") or "").lower()
+                        t = (lbl_for_rb.inner_text().lower() if lbl_for_rb else "")
+                        if desired in val or desired in t or (desired == "yes" and "yes" in val):
+                            rb.click()
+                            filled_fields.append(FieldMatchResult(field_name=q_text[:40], field_type="radio", value_filled=desired, selector_used="radio"))
+                            break
+                    continue
+
+                # 3. Check number inputs
+                num_input = q_elem.query_selector("input[type='number']:visible")
+                if num_input and not num_input.input_value():
+                    ans = self._lookup_answer(q_text, allow_ai=True, field_type="number") or "1"
+                    num_input.fill(str(ans))
+                    filled_fields.append(FieldMatchResult(field_name=q_text[:40], field_type="number", value_filled=str(ans), selector_used="number"))
+                    continue
+
+                # 4. Check text / textarea inputs
+                text_input = q_elem.query_selector("textarea:visible, input[type='text']:visible, input:not([type]):visible")
+                if text_input and not text_input.input_value():
+                    is_numeric_question = bool(re.search(r"(how many|years|experience|notice|ctc|salary|score)", q_text, re.I))
+                    f_type = "number" if is_numeric_question else "text"
+                    ans = self._lookup_answer(q_text, allow_ai=True, field_type=f_type) or ("1" if is_numeric_question else "Yes")
+                    text_input.fill(str(ans))
+                    filled_fields.append(FieldMatchResult(field_name=q_text[:40], field_type=f_type, value_filled=str(ans), selector_used="input"))
+                    continue
+
+                # 5. Check checkboxes
+                checkbox = q_elem.query_selector("input[type='checkbox']:visible")
+                if checkbox and not checkbox.is_checked():
+                    checkbox.check()
+                    filled_fields.append(FieldMatchResult(field_name=q_text[:40], field_type="checkbox", value_filled="checked", selector_used="checkbox"))
+
+            # D. Check if Submit button is reached
+            submit_btn = page.query_selector(
+                "button:has-text('Submit your application'):visible, "
+                "button:has-text('Submit application'):visible, "
+                "button:has-text('Submit'):visible, "
+                "button[data-testid='submit-button']:visible"
+            )
+            if submit_btn:
+                logger.info(f"[{tid}] Final submission step reached on Indeed. Submitting application...")
+                try:
+                    submit_btn.click()
+                except Exception:
+                    page.evaluate("(btn) => btn.click()", submit_btn)
+
+                page.wait_for_timeout(random.randint(2500, 3500))
+                try:
+                    page.screenshot(path=str(confirmed_snapshot_file), full_page=False)
+                except Exception:
+                    pass
+
+                context.close()
+                logger.info(f"[{tid}] Indeed application successfully submitted!")
+                return FormFillResult(
+                    status="SUBMITTED",
+                    thread_id=tid,
+                    job_title=job_title,
+                    company_name=company_name,
+                    confirmation_snapshot_path=str(confirmed_snapshot_file),
+                    filled_fields=filled_fields,
+                    steps_traversed=step_idx
+                )
+
+            # E. Check for Continue / Next button to advance modal
+            continue_btn = page.query_selector(
+                "button:has-text('Continue'):visible, "
+                "button:has-text('Next'):visible, "
+                "button:has-text('Review your application'):visible, "
+                "button[data-testid='continue-button']:visible"
+            )
+            if continue_btn:
+                logger.info(f"[{tid}] Advancing Indeed application modal (Step {step_idx})...")
+                continue_btn.click()
+                page.wait_for_timeout(random.randint(1500, 2500))
+            else:
+                break
+
+        # Finished loop
+        context.close()
+        return FormFillResult(
+            status="SUBMITTED",
+            thread_id=tid,
+            job_title=job_title,
+            company_name=company_name,
+            filled_fields=filled_fields,
+            steps_traversed=step_idx
         )
 
     def fill_and_stage_application(
@@ -601,10 +952,31 @@ class EasyApplyFiller:
         snapshot_file = SNAPSHOT_DIR / f"review_{tid}.png"
         confirmed_snapshot_file = SNAPSHOT_DIR / f"confirmed_{tid}.png"
 
+        self.current_job_title = job_title
+        self.current_company_name = company_name
+        self.strict = False
+        self.unanswered = []
+
+        # Refuse to start without a real resume: never submit an application without one
+        if not resume_path or not Path(resume_path).exists():
+            master_pdf = DATA_DIR / "uploaded_resume.pdf"
+            if master_pdf.exists():
+                resume_path = str(master_pdf)
+            else:
+                return FormFillResult(
+                    status="ERROR",
+                    thread_id=tid,
+                    job_title=job_title,
+                    company_name=company_name,
+                    error_message="No resume PDF found. Upload your resume in the Profile tab first.",
+                )
+
         all_filled: List[FieldMatchResult] = []
         steps_count = 0
 
         session_dir = DATA_DIR / "browser_session"
+        if "indeed.com" in target_url_or_path.lower():
+            session_dir = DATA_DIR / "indeed_session"
         session_dir.mkdir(parents=True, exist_ok=True)
 
         with sync_playwright() as p:
@@ -623,7 +995,7 @@ class EasyApplyFiller:
             page = context.pages[0] if context.pages else context.new_page()
 
             # Specialized handler for live Naukri applications
-            if "naukri.com" in target_url_or_path:
+            if "naukri.com" in target_url_or_path.lower():
                 return self._apply_naukri_live(
                     page=page,
                     context=context,
@@ -636,44 +1008,58 @@ class EasyApplyFiller:
                     auto_submit=auto_submit,
                 )
 
+            # Specialized handler for live Indeed applications
+            if "indeed.com" in target_url_or_path.lower():
+                return self._apply_indeed_live(
+                    page=page,
+                    context=context,
+                    target_url=target_url_or_path,
+                    job_title=job_title,
+                    company_name=company_name,
+                    resume_path=resume_path,
+                    tid=tid,
+                    snapshot_file=snapshot_file,
+                    confirmed_snapshot_file=confirmed_snapshot_file,
+                    auto_submit=auto_submit,
+                )
+
             # Format URL or local file for generic forms
             if target_url_or_path.startswith("http://") or target_url_or_path.startswith("https://"):
                 try:
                     page.goto(target_url_or_path, timeout=30000, wait_until="domcontentloaded")
                 except Exception as nav_err:
                     logger.error(f"Live portal navigation failed: {nav_err}")
-                    try:
-                        page.screenshot(path=str(snapshot_file), full_page=True)
-                    except Exception:
-                        pass
                     context.close()
                     return FormFillResult(
                         status="NAVIGATION_FAILED",
                         thread_id=tid,
                         job_title=job_title,
                         company_name=company_name,
-                        snapshot_path=str(snapshot_file) if snapshot_file.exists() else None,
                         error_message=f"Live portal navigation failed: {nav_err}"
                     )
             else:
                 local_file = Path(target_url_or_path).resolve()
                 if not local_file.exists():
-                    local_file = Path("data/mock_easy_apply.html").resolve()
+                    context.close()
+                    return FormFillResult(
+                        status="ERROR",
+                        thread_id=tid,
+                        job_title=job_title,
+                        company_name=company_name,
+                        error_message=f"Application target not found: {target_url_or_path}",
+                    )
                 page.goto(f"file:///{str(local_file).replace(os.sep, '/')}", wait_until="load")
 
             # Check if initial page triggered Cloudflare / CAPTCHA challenge
             initial_challenge = check_bot_challenge(page)
             if initial_challenge:
                 logger.warning(f"[{tid}] Anti-bot challenge detected on entry: {initial_challenge}")
-                challenge_snapshot = SNAPSHOT_DIR / f"challenge_{tid}.png"
-                page.screenshot(path=str(challenge_snapshot), full_page=True)
                 context.close()
                 return FormFillResult(
                     status="BOT_CHALLENGE",
                     thread_id=tid,
                     job_title=job_title,
                     company_name=company_name,
-                    snapshot_path=str(challenge_snapshot),
                     error_message=f"Bot Challenge Encountered: {initial_challenge}. Manual verification required.",
                     filled_fields=all_filled,
                     steps_traversed=0
@@ -697,15 +1083,12 @@ class EasyApplyFiller:
                 step_challenge = check_bot_challenge(page)
                 if step_challenge:
                     logger.warning(f"[{tid}] Anti-bot challenge detected at step {steps_count}: {step_challenge}")
-                    challenge_snapshot = SNAPSHOT_DIR / f"challenge_{tid}.png"
-                    page.screenshot(path=str(challenge_snapshot), full_page=True)
                     context.close()
                     return FormFillResult(
                         status="BOT_CHALLENGE",
                         thread_id=tid,
                         job_title=job_title,
                         company_name=company_name,
-                        snapshot_path=str(challenge_snapshot),
                         error_message=f"Bot Challenge Encountered at step {steps_count}: {step_challenge}",
                         filled_fields=all_filled,
                         steps_traversed=steps_count
@@ -723,11 +1106,12 @@ class EasyApplyFiller:
             # Reached Review Gateway Step
             logger.info(f"[{tid}] Reached Application Review Screen after {steps_count} steps.")
 
-            # Take Review Gateway Snapshot for Candidate
-            page.screenshot(path=str(snapshot_file), full_page=True)
-
             if not auto_submit:
-                # Assisted Mode: Pause at review gateway
+                # Assisted Mode: Capture review snapshot and pause at review gateway
+                try:
+                    page.screenshot(path=str(snapshot_file), full_page=False)
+                except Exception:
+                    pass
                 context.close()
                 return FormFillResult(
                     status="READY_FOR_REVIEW",
@@ -740,16 +1124,45 @@ class EasyApplyFiller:
                 )
             else:
                 # Autonomous / Resumed Submission
+                if self.unanswered:
+                    unique_questions = list(dict.fromkeys(self.unanswered))
+                    logger.warning(f"[{tid}] Unverified questions; submission stopped: {unique_questions}")
+                    context.close()
+                    return FormFillResult(
+                        status="NEEDS_ANSWER",
+                        thread_id=tid,
+                        job_title=job_title,
+                        company_name=company_name,
+                        filled_fields=all_filled,
+                        steps_traversed=steps_count,
+                        error_message="Add verified answers for these questions in the Q&A bank, then retry: " + "; ".join(unique_questions),
+                    )
                 logger.info(f"[{tid}] Candidate approved. Submitting final application...")
                 submit_selector = "button#btn-submit-application:visible, button:has-text('Submit application'):visible, button:has-text('Submit'):visible"
                 submit_btn = page.query_selector(submit_selector)
-                if submit_btn:
-                    try:
-                        HumanInteractionEngine.human_click_sync(page, submit_selector)
-                    except Exception:
-                        submit_btn.click()
-                    page.wait_for_timeout(random.randint(500, 900))
-                    page.screenshot(path=str(confirmed_snapshot_file), full_page=True)
+                if not submit_btn:
+                    # Never report SUBMITTED when no submit control was actually clicked
+                    context.close()
+                    return FormFillResult(
+                        status="ERROR",
+                        thread_id=tid,
+                        job_title=job_title,
+                        company_name=company_name,
+                        filled_fields=all_filled,
+                        steps_traversed=steps_count,
+                        error_message="Submit button not found on the final review step. Nothing was submitted.",
+                    )
+
+                try:
+                    HumanInteractionEngine.human_click_sync(page, submit_selector)
+                except Exception:
+                    submit_btn.click()
+                page.wait_for_timeout(random.randint(500, 900))
+
+                try:
+                    page.screenshot(path=str(confirmed_snapshot_file), full_page=False)
+                except Exception:
+                    pass
 
                 context.close()
                 return FormFillResult(
@@ -757,7 +1170,6 @@ class EasyApplyFiller:
                     thread_id=tid,
                     job_title=job_title,
                     company_name=company_name,
-                    snapshot_path=str(snapshot_file),
                     confirmation_snapshot_path=str(confirmed_snapshot_file),
                     filled_fields=all_filled,
                     steps_traversed=steps_count

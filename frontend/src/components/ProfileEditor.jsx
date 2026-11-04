@@ -44,23 +44,28 @@ export default function ProfileEditor({ isOpen, onClose, notify, onProfileUpdate
   const [newSkillCategory, setNewSkillCategory] = useState('programming_languages');
   const [newSkill, setNewSkill] = useState('');
 
-  // Dropdown state for Default Freshness Rule
+  // Dropdown states for Career Preferences
   const [isFreshnessOpen, setIsFreshnessOpen] = useState(false);
   const freshnessDropdownRef = useRef(null);
+  const [isExpLevelOpen, setIsExpLevelOpen] = useState(false);
+  const expLevelDropdownRef = useRef(null);
 
   useEffect(() => {
     function handleClickOutside(event) {
       if (freshnessDropdownRef.current && !freshnessDropdownRef.current.contains(event.target)) {
         setIsFreshnessOpen(false);
       }
+      if (expLevelDropdownRef.current && !expLevelDropdownRef.current.contains(event.target)) {
+        setIsExpLevelOpen(false);
+      }
     }
-    if (isFreshnessOpen) {
+    if (isFreshnessOpen || isExpLevelOpen) {
       document.addEventListener('mousedown', handleClickOutside);
     }
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
     };
-  }, [isFreshnessOpen]);
+  }, [isFreshnessOpen, isExpLevelOpen]);
 
   const handleDownloadResume = async () => {
     setDownloadingPdf(true);
@@ -361,7 +366,7 @@ export default function ProfileEditor({ isOpen, onClose, notify, onProfileUpdate
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px' }}>
                     <Loader2 size={36} color="var(--primary-light)" className="animate-spin" />
                     <div style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--primary-light)' }}>
-                      Analyzing Resume with Gemini AI...
+                      Analyzing Resume with AI...
                     </div>
                     <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
                       Extracting technical skills, projects, work experience, and contact details
@@ -597,6 +602,139 @@ export default function ProfileEditor({ isOpen, onClose, notify, onProfileUpdate
                       />
                     </div>
 
+                    {/* Compact Dropdown: Target Experience Level */}
+                    <div ref={expLevelDropdownRef} style={{ position: 'relative' }}>
+                      <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '5px' }}>
+                        Target Experience Level
+                      </label>
+                      {(() => {
+                        const currentExp = profile.preferences?.experience_level || '0-1';
+                        const EXPERIENCE_OPTIONS = [
+                          { value: '0-1', label: 'Fresher (0 – 1 Yrs)', icon: '🎓', badge: 'Recommended' },
+                          { value: '1-2', label: 'Early Career (1 – 2 Yrs)', icon: '💼', badge: '' },
+                          { value: '2-4', label: 'Junior / Assoc (2 – 4 Yrs)', icon: '🚀', badge: '' },
+                          { value: 'all', label: 'Any Experience', icon: '🌐', badge: '' },
+                        ];
+                        const activeExpOpt = EXPERIENCE_OPTIONS.find((o) => o.value === currentExp) || EXPERIENCE_OPTIONS[0];
+
+                        return (
+                          <div style={{ position: 'relative' }}>
+                            <button
+                              id="experience-dropdown-toggle-btn"
+                              type="button"
+                              className="form-input"
+                              onClick={() => setIsExpLevelOpen((prev) => !prev)}
+                              style={{
+                                width: '100%',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                cursor: 'pointer',
+                                background: '#ffffff',
+                                border: isExpLevelOpen ? '1px solid #6366f1' : '1px solid var(--border-subtle)',
+                                color: '#4f46e5',
+                                fontWeight: 700,
+                                fontSize: '0.84rem',
+                                padding: '8px 12px',
+                                boxShadow: isExpLevelOpen ? '0 0 0 3px rgba(99, 102, 241, 0.15)' : 'none',
+                                transition: 'all 0.15s ease',
+                              }}
+                            >
+                              <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <span>{activeExpOpt.icon}</span>
+                                <span>{activeExpOpt.label}</span>
+                                {activeExpOpt.badge && (
+                                  <span style={{
+                                    fontSize: '0.62rem',
+                                    padding: '1px 5px',
+                                    borderRadius: '4px',
+                                    background: 'rgba(16, 185, 129, 0.15)',
+                                    color: '#047857',
+                                    fontWeight: 700,
+                                  }}>
+                                    {activeExpOpt.badge}
+                                  </span>
+                                )}
+                              </span>
+                              {isExpLevelOpen ? <ChevronUp size={15} color="#4f46e5" /> : <ChevronDown size={15} color="#4f46e5" />}
+                            </button>
+
+                            {/* Floating Dropdown Menu */}
+                            {isExpLevelOpen && (
+                              <div style={{
+                                position: 'absolute',
+                                left: 0,
+                                right: 0,
+                                top: 'calc(100% + 4px)',
+                                background: '#ffffff',
+                                border: '1px solid rgba(99, 102, 241, 0.3)',
+                                borderRadius: '10px',
+                                boxShadow: '0 10px 25px rgba(15, 23, 42, 0.12), 0 4px 10px rgba(99, 102, 241, 0.08)',
+                                zIndex: 60,
+                                padding: '4px',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: '2px',
+                              }}>
+                                {EXPERIENCE_OPTIONS.map((opt) => {
+                                  const isSelected = currentExp === opt.value;
+                                  return (
+                                    <div
+                                      key={opt.value}
+                                      onClick={() => {
+                                        setProfile({
+                                          ...profile,
+                                          preferences: { ...profile.preferences, experience_level: opt.value }
+                                        });
+                                        setIsExpLevelOpen(false);
+                                      }}
+                                      style={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'space-between',
+                                        padding: '8px 10px',
+                                        borderRadius: '7px',
+                                        cursor: 'pointer',
+                                        background: isSelected ? 'rgba(99, 102, 241, 0.12)' : 'transparent',
+                                        color: isSelected ? '#4f46e5' : 'var(--text-main)',
+                                        fontSize: '0.82rem',
+                                        fontWeight: isSelected ? 700 : 500,
+                                        transition: 'background 0.12s',
+                                      }}
+                                      onMouseEnter={(e) => {
+                                        if (!isSelected) e.currentTarget.style.background = 'rgba(15, 23, 42, 0.04)';
+                                      }}
+                                      onMouseLeave={(e) => {
+                                        if (!isSelected) e.currentTarget.style.background = isSelected ? 'rgba(99, 102, 241, 0.12)' : 'transparent';
+                                      }}
+                                    >
+                                      <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                        <span>{opt.icon}</span>
+                                        <span>{opt.label}</span>
+                                        {opt.badge && (
+                                          <span style={{
+                                            fontSize: '0.62rem',
+                                            padding: '1px 5px',
+                                            borderRadius: '4px',
+                                            background: 'rgba(16, 185, 129, 0.15)',
+                                            color: '#047857',
+                                            fontWeight: 700,
+                                          }}>
+                                            {opt.badge}
+                                          </span>
+                                        )}
+                                      </span>
+                                      {isSelected && <Check size={14} color="#4f46e5" />}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
+                    </div>
+
                     {/* Compact Dropdown: Posting Freshness Rule */}
                     <div ref={freshnessDropdownRef} style={{ position: 'relative' }}>
                       <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '5px' }}>
@@ -734,10 +872,10 @@ export default function ProfileEditor({ isOpen, onClose, notify, onProfileUpdate
                         </div>
                         <div>
                           <div style={{ fontSize: '0.92rem', fontWeight: 700, color: 'var(--text-main)' }}>
-                            Autonomous Night Scheduler (Auto-Pilot)
+                            Hourly Auto-Discovery (9:00 AM – 9:00 PM)
                           </div>
                           <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>
-                            Scans fresh postings at night & submits applications for top matches (≥ 80%)
+                            Active Window: <strong>9:00 AM – 9:00 PM</strong> • Agent automatically triggers Discover Jobs every 1 hour and applies to high matches
                           </div>
                         </div>
                       </div>
@@ -754,34 +892,32 @@ export default function ProfileEditor({ isOpen, onClose, notify, onProfileUpdate
                           style={{ width: '18px', height: '18px', cursor: 'pointer', accentColor: 'var(--primary)' }}
                         />
                         <span style={{ fontSize: '0.82rem', fontWeight: 700, color: profile.preferences?.autopilot_enabled ? 'var(--emerald)' : 'var(--text-muted)' }}>
-                          {profile.preferences?.autopilot_enabled ? 'Active (Auto-Pilot ON)' : 'Disabled (Manual Only)'}
+                          {profile.preferences?.autopilot_enabled ? 'Active (Hourly Auto ON)' : 'Disabled (Manual Only)'}
                         </span>
                       </label>
                     </div>
 
                     {/* Auto-Pilot Rules Row */}
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', paddingTop: '4px' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '14px', paddingTop: '4px' }}>
                       <div>
                         <label style={{ display: 'block', fontSize: '0.74rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
-                          Night Run Time
+                          Active Window (Office Hours)
                         </label>
-                        <input
-                          type="time"
-                          className="form-input"
-                          value={`${String(profile.preferences?.autopilot_run_hour ?? 22).padStart(2, '0')}:${String(profile.preferences?.autopilot_run_minute ?? 30).padStart(2, '0')}`}
-                          onChange={(e) => {
-                            const [h, m] = (e.target.value || '22:30').split(':');
-                            setProfile({
-                              ...profile,
-                              preferences: {
-                                ...profile.preferences,
-                                autopilot_run_hour: parseInt(h) || 22,
-                                autopilot_run_minute: parseInt(m) || 30,
-                              }
-                            });
-                          }}
-                          style={{ fontSize: '0.82rem', padding: '6px 10px' }}
-                        />
+                        <div style={{
+                          fontSize: '0.82rem',
+                          fontWeight: 700,
+                          padding: '7px 12px',
+                          borderRadius: '8px',
+                          background: 'rgba(91, 132, 51, 0.12)',
+                          border: '1px solid rgba(91, 132, 51, 0.25)',
+                          color: '#2d6a4f',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px'
+                        }}>
+                          <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#2d6a4f', display: 'inline-block' }}></span>
+                          9:00 AM – 9:00 PM
+                        </div>
                       </div>
 
                       <div>
@@ -797,26 +933,26 @@ export default function ProfileEditor({ isOpen, onClose, notify, onProfileUpdate
                           })}
                           style={{ fontSize: '0.82rem', padding: '6px 10px' }}
                         >
-                          <option value={75}>≥ 75% Match</option>
                           <option value={80}>≥ 80% Match (Recommended)</option>
                           <option value={85}>≥ 85% Match (Strict)</option>
                           <option value={90}>≥ 90% Match (Elite)</option>
+                          <option value={75}>≥ 75% Match (Broad)</option>
                         </select>
                       </div>
 
                       <div>
                         <label style={{ display: 'block', fontSize: '0.74rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
-                          Nightly Application Cap
+                          Daily Application Cap
                         </label>
                         <input
                           type="number"
                           className="form-input"
                           min={1}
-                          max={25}
-                          value={profile.preferences?.autopilot_max_daily_apps ?? 12}
+                          max={15}
+                          value={profile.preferences?.autopilot_max_daily_apps ?? 7}
                           onChange={(e) => setProfile({
                             ...profile,
-                            preferences: { ...profile.preferences, autopilot_max_daily_apps: parseInt(e.target.value) || 12 }
+                            preferences: { ...profile.preferences, autopilot_max_daily_apps: parseInt(e.target.value) || 7 }
                           })}
                           style={{ fontSize: '0.82rem', padding: '6px 10px' }}
                         />
@@ -962,18 +1098,19 @@ export default function ProfileEditor({ isOpen, onClose, notify, onProfileUpdate
 
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
                       {Object.entries(technicalSkills).map(([category, skillsList]) => {
-                        const formattedCat = category.replace(/_/g, ' ').toUpperCase();
+                        const isSoft = category === 'soft_skills';
+                        const formattedCat = isSoft ? '🌟 SOFT SKILLS & CORE STRENGTHS' : category.replace(/_/g, ' ').toUpperCase();
                         const list = Array.isArray(skillsList) ? skillsList : [];
                         return (
                           <div key={category} style={{ borderBottom: '1px solid var(--border-subtle)', paddingBottom: '10px' }}>
-                            <div style={{ fontSize: '0.74rem', fontWeight: 700, color: 'var(--cyan-light)', marginBottom: '6px' }}>
+                            <div style={{ fontSize: '0.74rem', fontWeight: 700, color: isSoft ? '#7e22ce' : 'var(--cyan-light)', marginBottom: '6px' }}>
                               {formattedCat} ({list.length})
                             </div>
                             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
                               {list.map((skill, sIdx) => (
                                 <span
                                   key={sIdx}
-                                  className="badge badge-emerald"
+                                  className={isSoft ? "badge badge-purple" : "badge badge-emerald"}
                                   style={{ fontSize: '0.74rem', padding: '3px 8px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
                                 >
                                   {skill}
@@ -1005,13 +1142,14 @@ export default function ProfileEditor({ isOpen, onClose, notify, onProfileUpdate
                           <option value="ai_and_ml">AI & ML Tools</option>
                           <option value="databases">Databases</option>
                           <option value="tools_and_platforms">DevOps & Cloud</option>
+                          <option value="soft_skills">🌟 Soft Skills & Strengths</option>
                         </select>
 
                         <input
                           id="add-skill-input"
                           className="form-input"
-                          style={{ width: '200px' }}
-                          placeholder="New skill (e.g. PyTorch)..."
+                          style={{ width: '220px' }}
+                          placeholder={newSkillCategory === 'soft_skills' ? "New soft skill (e.g. Negotiation)..." : "New skill (e.g. PyTorch)..."}
                           value={newSkill}
                           onChange={(e) => setNewSkill(e.target.value)}
                           onKeyDown={(e) => {

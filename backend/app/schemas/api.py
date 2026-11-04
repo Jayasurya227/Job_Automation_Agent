@@ -6,6 +6,8 @@ Standards: Rule 2 (Input Validation & Type-Safety), Rule 3 (Concise & Accurate).
 from typing import List, Literal, Optional
 from pydantic import BaseModel, Field
 
+from app.config import READY_MATCH_THRESHOLD
+
 class AnalyzeJobRequest(BaseModel):
     """Payload sent to analyze, score, tailor, and track a job."""
     job_description: str = Field(..., min_length=20, description="Raw job description text")
@@ -42,7 +44,7 @@ class AnalyzeJobResponse(BaseModel):
 
 class UpdateStatusRequest(BaseModel):
     """Payload to transition an application through the pipeline."""
-    status: Literal["Saved", "Tailored", "Applied", "Interview", "Offer", "Rejected"]
+    status: Literal["Saved", "Ready", "Tailored", "Applied", "Interview", "Offer", "Rejected", "Archived"]
     notes: Optional[str] = ""
 
 class JobListItem(BaseModel):
@@ -59,6 +61,7 @@ class JobListItem(BaseModel):
     tailored_resume_tex_path: Optional[str] = ""
     tailored_resume_pdf_path: Optional[str] = None
     applied_at: Optional[str] = None
+    notes: Optional[str] = None
     created_at: str
 
 class JobDetailResponse(BaseModel):
@@ -100,11 +103,14 @@ class PipelineMetrics(BaseModel):
 class DiscoverJobsRequest(BaseModel):
     """Payload to trigger multi-portal job discovery and autonomous ingestion."""
     search_term: Optional[str] = Field(default=None, description="Target job title (e.g. 'Junior AI Engineer')")
+    search_terms: Optional[List[str]] = Field(default=None, description="List of target roles to scrape dynamically")
     location: Optional[str] = Field(default=None, description="Target location or 'Remote'")
-    portals: Optional[List[str]] = Field(default=["naukri"], description="List of job portals to scrape")
+    locations: Optional[List[str]] = Field(default=None, description="List of target locations to scrape dynamically")
+    portals: Optional[List[str]] = Field(default=["naukri", "indeed"], description="List of job portals to scrape")
     results_wanted: int = Field(default=8, ge=1, le=25, description="Number of results to query per portal")
     freshness_days: Optional[int] = Field(default=1, ge=0, le=30, description="Posting freshness in days (1 = last 24 hours)")
-    min_match_score: int = Field(default=75, ge=0, le=100, description="Minimum match score to mark job as Ready and tailor resume")
+    experience_level: Optional[str] = Field(default=None, description="Experience level filter (e.g. '0-1', '1-2', '2-4', 'all')")
+    min_match_score: int = Field(default=READY_MATCH_THRESHOLD, ge=0, le=100, description="Minimum match score to mark job as Ready")
     max_process: int = Field(default=5, ge=1, le=15, description="Maximum new jobs to score and ingest in this run")
 
 class ApplyWorkflowRequest(BaseModel):

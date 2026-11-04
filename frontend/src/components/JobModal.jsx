@@ -16,7 +16,8 @@ import {
   CheckCircle2,
   AlertCircle,
   Loader2,
-  FileCheck
+  FileCheck,
+  Zap
 } from 'lucide-react';
 import { api } from '../api';
 
@@ -27,6 +28,7 @@ export default function JobModal({
   onDelete, 
   notify,
   onApply,
+  isApplying = false,
   initialTab = 'overview'
 }) {
   const [job, setJob] = useState(null);
@@ -67,6 +69,17 @@ export default function JobModal({
     }
   };
 
+  const isExplicit1Click = Boolean(
+    job?.notes?.toLowerCase().includes('1-click') ||
+    job?.notes?.toLowerCase().includes('easy apply')
+  );
+  const isExternalJob = !isExplicit1Click && Boolean(
+    job?.notes?.toLowerCase().includes('external') ||
+    job?.applications?.[0]?.status === 'EXTERNAL_SITE' ||
+    job?.applications?.[0]?.notes?.toLowerCase().includes('external') ||
+    (job?.job_url && !job.job_url.includes('naukri.com') && !job.job_url.includes('indeed.com'))
+  );
+
   return (
     <div 
       className="modal-backdrop" 
@@ -79,9 +92,9 @@ export default function JobModal({
         bottom: 0,
         width: '100vw',
         height: '100vh',
-        backgroundColor: 'rgba(15, 23, 42, 0.65)',
-        backdropFilter: 'blur(8px)',
-        WebkitBackdropFilter: 'blur(8px)',
+        backgroundColor: 'rgba(20, 45, 25, 0.35)',
+        backdropFilter: 'blur(12px)',
+        WebkitBackdropFilter: 'blur(12px)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -90,43 +103,22 @@ export default function JobModal({
       }}
     >
       <div 
-        className="modal-container glass-panel" 
+        className="modal-container glass-panel job-modal-card" 
         onClick={(e) => e.stopPropagation()}
-        style={{
-          maxWidth: '840px',
-          width: '94%',
-          maxHeight: '90vh',
-          display: 'flex',
-          flexDirection: 'column',
-          overflow: 'hidden',
-          borderRadius: '16px',
-          border: '1px solid var(--border-subtle)',
-          boxShadow: '0 25px 50px -12px rgba(15, 23, 42, 0.35)',
-          background: 'var(--bg-card-solid, #ffffff)',
-          position: 'relative',
-          zIndex: 10000,
-        }}
       >
         {/* Modal Header */}
-        <div style={{
-          padding: '20px 24px',
-          borderBottom: '1px solid var(--border-subtle)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          background: 'var(--bg-card-solid, #ffffff)',
-        }}>
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <span className="badge badge-indigo" style={{ fontSize: '0.72rem' }}>
+        <div className="job-modal-header">
+          <div className="job-modal-header-info">
+            <div className="job-modal-title-row">
+              <span className="badge badge-indigo" style={{ fontSize: '0.72rem', flexShrink: 0 }}>
                 {job?.portal_name || 'Naukri'}
               </span>
-              <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--text-main)', letterSpacing: '-0.02em', margin: 0 }}>
+              <h2 className="job-modal-title">
                 {job?.job_title || 'Job Details'}
               </h2>
             </div>
             {job && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '4px', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+              <div className="job-modal-meta">
                 <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                   <Building size={13} color="var(--cyan-light)" /> {job.company_name}
                 </span>
@@ -135,35 +127,30 @@ export default function JobModal({
                     <MapPin size={13} color="var(--rose-light)" /> {job.location}
                   </span>
                 )}
-                {job.job_url && (
-                  <a 
-                    href={job.job_url} 
-                    target="_blank" 
-                    rel="noreferrer"
-                    style={{ display: 'flex', alignItems: 'center', gap: '3px', color: 'var(--primary-light)', textDecoration: 'none' }}
-                  >
-                    Post Link <ExternalLink size={12} />
-                  </a>
-                )}
               </div>
             )}
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <div className="job-modal-header-actions">
             {job && (
               job.status === 'Applied' ? (
-                <span className="badge badge-emerald" style={{ padding: '5px 12px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                <span className="badge badge-emerald" style={{ padding: '5px 12px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '5px', flexShrink: 0 }}>
                   <CheckCircle2 size={13} /> Applied
                 </span>
+              ) : isExternalJob ? (
+                <span className="badge" style={{ padding: '5px 12px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '5px', background: 'rgba(234, 179, 8, 0.12)', color: '#b45309', border: '1px solid rgba(234, 179, 8, 0.3)', flexShrink: 0 }}>
+                  <ExternalLink size={13} /> External Portal
+                </span>
               ) : (
-                <span className="badge badge-cyan" style={{ padding: '5px 12px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '5px' }}>
-                  <Sparkles size={13} /> Screened & Ready
+                <span className="badge badge-cyan" style={{ padding: '5px 12px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '5px', flexShrink: 0 }}>
+                  <Zap size={13} /> 1-Click Apply Ready
                 </span>
               )
             )}
 
             <button
               onClick={onClose}
+              title="Close modal"
               style={{
                 background: 'rgba(15, 23, 42, 0.06)',
                 border: '1px solid var(--border-subtle)',
@@ -171,6 +158,10 @@ export default function JobModal({
                 padding: '6px',
                 color: 'var(--text-secondary)',
                 cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0,
               }}
             >
               <X size={18} />
@@ -179,16 +170,15 @@ export default function JobModal({
         </div>
 
         {/* Modal Tabs Navigation */}
-        <div style={{
+        <div className="job-modal-tabs-nav" style={{
           display: 'flex',
           borderBottom: '1px solid var(--border-subtle)',
           background: 'rgba(241, 245, 249, 0.75)',
-          padding: '0 24px',
-          overflowX: 'auto'
+          padding: '0 20px',
         }}>
           {[
-            { id: 'overview', label: 'AI Match Analysis', icon: Sparkles },
-            { id: 'description', label: 'Full Job Description', icon: Globe },
+            { id: 'overview', label: 'AI Match Analysis', shortLabel: 'AI Analysis', icon: Sparkles },
+            { id: 'description', label: 'Full Job Description', shortLabel: 'Job Description', icon: Globe },
           ].map((tab) => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;
@@ -196,31 +186,35 @@ export default function JobModal({
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
+                className="job-modal-tab-btn"
                 style={{
+                  flex: 1,
                   display: 'flex',
                   alignItems: 'center',
+                  justifyContent: 'center',
                   gap: '7px',
-                  padding: '12px 16px',
+                  padding: '12px 14px',
                   background: 'none',
                   border: 'none',
                   borderBottom: isActive ? '2px solid var(--primary)' : '2px solid transparent',
                   color: isActive ? 'var(--primary-light)' : 'var(--text-secondary)',
                   fontWeight: isActive ? 700 : 500,
-                  fontSize: '0.85rem',
+                  fontSize: '0.84rem',
                   cursor: 'pointer',
                   transition: 'all 0.15s ease',
                   whiteSpace: 'nowrap'
                 }}
               >
                 <Icon size={15} />
-                {tab.label}
+                <span className="desktop-tab-label">{tab.label}</span>
+                <span className="mobile-tab-label" style={{ display: 'none' }}>{tab.shortLabel}</span>
               </button>
             );
           })}
         </div>
 
         {/* Modal Body Content */}
-        <div style={{ padding: '24px', overflowY: 'auto', flex: 1 }}>
+        <div className="job-modal-body" style={{ padding: '24px', overflowY: 'auto', flex: 1 }}>
           {loading ? (
             <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
               Loading job details...
@@ -232,11 +226,7 @@ export default function JobModal({
               {/* TAB 1: AI Match Analysis */}
               {activeTab === 'overview' && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                  <div style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
-                    gap: '16px',
-                  }}>
+                  <div className="job-modal-skills-grid">
                     {/* Matching Skills */}
                     <div style={{
                       background: 'rgba(16, 185, 129, 0.05)',
@@ -245,7 +235,7 @@ export default function JobModal({
                       padding: '16px',
                     }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
-                        <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--emerald)' }} />
+                        <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--emerald)', flexShrink: 0 }} />
                         <h4 style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--emerald-light)', margin: 0 }}>
                           Matching Candidate Skills ({job.matching_skills?.length || 0})
                         </h4>
@@ -253,7 +243,7 @@ export default function JobModal({
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
                         {job.matching_skills && job.matching_skills.length > 0 ? (
                           job.matching_skills.map((s, idx) => (
-                            <span key={idx} className="badge badge-emerald" style={{ fontSize: '0.78rem' }}>
+                            <span key={idx} className="badge badge-emerald job-modal-skill-badge">
                               {s}
                             </span>
                           ))
@@ -271,7 +261,7 @@ export default function JobModal({
                       padding: '16px',
                     }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
-                        <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--rose)' }} />
+                        <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--rose)', flexShrink: 0 }} />
                         <h4 style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--rose-light)', margin: 0 }}>
                           Missing Keywords / Skills ({job.missing_skills?.length || 0})
                         </h4>
@@ -279,7 +269,7 @@ export default function JobModal({
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
                         {job.missing_skills && job.missing_skills.length > 0 ? (
                           job.missing_skills.map((s, idx) => (
-                            <span key={idx} className="badge badge-rose" style={{ fontSize: '0.78rem' }}>
+                            <span key={idx} className="badge badge-rose job-modal-skill-badge">
                               {s}
                             </span>
                           ))
@@ -328,24 +318,23 @@ export default function JobModal({
                 </div>
               )}
 
-              {/* TAB 3: Full Job Description */}
+              {/* TAB 2: Full Job Description */}
               {activeTab === 'description' && (
                 <div>
-                  <pre style={{
-                    background: 'rgba(0, 0, 0, 0.3)',
+                  <div style={{
+                    background: 'rgba(15, 23, 42, 0.02)',
                     border: '1px solid var(--border-subtle)',
-                    borderRadius: '10px',
-                    padding: '16px',
+                    borderRadius: '12px',
+                    padding: '18px 20px',
                     fontFamily: 'var(--font-sans)',
-                    fontSize: '0.85rem',
-                    color: 'var(--text-secondary)',
+                    fontSize: '0.88rem',
+                    color: 'var(--text-main)',
                     whiteSpace: 'pre-wrap',
-                    lineHeight: 1.6,
-                    maxHeight: '450px',
-                    overflowY: 'auto',
+                    lineHeight: 1.65,
+                    wordBreak: 'break-word',
                   }}>
-                    {job.job_description}
-                  </pre>
+                    {job.job_description || 'No detailed job description provided.'}
+                  </div>
                 </div>
               )}
             </>
@@ -353,48 +342,14 @@ export default function JobModal({
         </div>
 
         {/* Modal Footer */}
-        <div style={{
-          padding: '16px 24px',
-          borderTop: '1px solid var(--border-subtle)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          background: 'rgba(7, 10, 19, 0.5)',
-        }}>
-          {job && (
-            <button
-              className="btn btn-danger-ghost btn-sm"
-              onClick={() => {
-                if (window.confirm(`Delete ${job.job_title} at ${job.company_name} from database?`)) {
-                  onDelete(job.id);
-                  onClose();
-                }
-              }}
-            >
-              <Trash2 size={15} /> Delete Job Listing
-            </button>
-          )}
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            {job && (
-              <button
-                id="download-tailored-resume-btn"
-                type="button"
-                className="btn btn-emerald btn-sm"
-                style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '8px 16px' }}
-                onClick={() => {
-                  window.open(api.downloadTailoredResumePdfUrl(job.id), '_blank');
-                  if (notify) notify('Opening candidate master PDF resume...', 'info');
-                }}
-              >
-                <Download size={15} /> Download Resume (PDF)
-              </button>
-            )}
-
-            <button className="btn btn-secondary btn-sm" onClick={onClose}>
-              Close
-            </button>
-          </div>
+        <div className="job-modal-footer">
+          <button 
+            type="button" 
+            className="btn btn-secondary btn-sm job-modal-close-btn" 
+            onClick={onClose}
+          >
+            Close
+          </button>
         </div>
       </div>
     </div>

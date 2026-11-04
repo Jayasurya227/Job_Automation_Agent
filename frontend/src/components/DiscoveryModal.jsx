@@ -17,6 +17,7 @@ import {
 
 const AVAILABLE_PORTALS = [
   { id: 'naukri', label: 'Naukri.com', icon: '🇮🇳', desc: 'Top Indian tech portal (Direct 1-Click Apply)' },
+  { id: 'indeed', label: 'Indeed', icon: '🌐', desc: 'Global & Indian listings (Easily Apply)' },
 ];
 
 export default function DiscoveryModal({ isOpen, onClose, profile, onDiscoveryComplete, addToast }) {
@@ -29,7 +30,7 @@ export default function DiscoveryModal({ isOpen, onClose, profile, onDiscoveryCo
   const [selectedPortals, setSelectedPortals] = useState(['naukri']);
   const [resultsWanted, setResultsWanted] = useState(4);
   const [freshnessDays, setFreshnessDays] = useState(profile?.preferences?.freshness_days ?? 1);
-  const [minMatchScore, setMinMatchScore] = useState(75);
+  const [minMatchScore, setMinMatchScore] = useState(70);
   const [maxProcess, setMaxProcess] = useState(2);
 
   // Sync with saved profile preferences
@@ -90,9 +91,29 @@ export default function DiscoveryModal({ isOpen, onClose, profile, onDiscoveryCo
         }
       });
 
+      let searchTermsToUse = null;
+      if (searchTerm && searchTerm.includes(',')) {
+        searchTermsToUse = searchTerm.split(',').map(s => s.trim()).filter(Boolean);
+      } else if (searchTerm && searchTerm.trim()) {
+        searchTermsToUse = [searchTerm.trim()];
+      } else {
+        searchTermsToUse = targetRoles.slice(0, 3);
+      }
+
+      let locationsToUse = null;
+      if (location && location.includes(',')) {
+        locationsToUse = location.split(',').map(l => l.trim()).filter(Boolean);
+      } else if (location && location.trim()) {
+        locationsToUse = [location.trim()];
+      } else {
+        locationsToUse = preferredLocs.slice(0, 2);
+      }
+
       const result = await api.discoverJobs({
-        search_term: searchTerm,
-        location: location,
+        search_terms: searchTermsToUse,
+        search_term: searchTermsToUse[0] || 'Junior AI Engineer',
+        locations: locationsToUse,
+        location: locationsToUse.join(', '),
         portals: selectedPortals,
         results_wanted: Number(resultsWanted),
         freshness_days: Number(freshnessDays),
@@ -136,8 +157,8 @@ export default function DiscoveryModal({ isOpen, onClose, profile, onDiscoveryCo
         position: 'fixed',
         inset: 0,
         zIndex: 100,
-        background: 'rgba(3, 7, 18, 0.85)',
-        backdropFilter: 'blur(10px)',
+        background: 'rgba(20, 45, 25, 0.35)',
+        backdropFilter: 'blur(12px)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -155,10 +176,10 @@ export default function DiscoveryModal({ isOpen, onClose, profile, onDiscoveryCo
           display: 'flex',
           flexDirection: 'column',
           overflowY: 'auto',
-          borderRadius: '16px',
-          border: '1px solid rgba(255, 255, 255, 0.1)',
-          background: 'linear-gradient(145deg, rgba(15, 23, 42, 0.96), rgba(7, 10, 19, 0.98))',
-          boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.8), 0 0 35px rgba(6, 182, 212, 0.25)',
+          borderRadius: '24px',
+          border: '1.8px solid #ffffff',
+          background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.94) 0%, rgba(245, 252, 246, 0.88) 100%)',
+          boxShadow: 'var(--shadow-lg), 0 20px 50px rgba(15, 40, 20, 0.16)',
           padding: '24px',
           animation: 'fadeIn 0.2s ease',
         }} 
@@ -171,16 +192,16 @@ export default function DiscoveryModal({ isOpen, onClose, profile, onDiscoveryCo
               width: '42px',
               height: '42px',
               borderRadius: '12px',
-              background: 'linear-gradient(135deg, #06b6d4 0%, #3b82f6 100%)',
+              background: 'linear-gradient(135deg, #5b8433 0%, #466725 100%)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              boxShadow: '0 4px 16px rgba(6, 182, 212, 0.35)',
+              boxShadow: '0 4px 16px rgba(74, 108, 37, 0.35)',
             }}>
               <Sparkles size={22} color="#ffffff" />
             </div>
             <div>
-              <h2 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.02em' }}>
+              <h2 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 800, color: 'var(--text-main)', letterSpacing: '-0.02em' }}>
                 Autonomous Job Discovery
               </h2>
               <p style={{ margin: '3px 0 0 0', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
@@ -192,9 +213,9 @@ export default function DiscoveryModal({ isOpen, onClose, profile, onDiscoveryCo
             id="close-discovery-modal-btn"
             onClick={handleResetAndClose}
             style={{
-              background: 'rgba(255, 255, 255, 0.05)',
+              background: 'rgba(0, 0, 0, 0.04)',
               border: '1px solid var(--border-subtle)',
-              color: 'var(--text-muted)',
+              color: 'var(--text-secondary)',
               borderRadius: '8px',
               width: '32px',
               height: '32px',
@@ -219,21 +240,40 @@ export default function DiscoveryModal({ isOpen, onClose, profile, onDiscoveryCo
                   Target Role Search
                 </label>
                 <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '10px' }}>
+                  <button
+                    type="button"
+                    onClick={() => setSearchTerm(targetRoles.slice(0, 3).join(', '))}
+                    style={{
+                      padding: '5px 12px',
+                      fontSize: '0.75rem',
+                      fontWeight: 700,
+                      borderRadius: '9999px',
+                      border: searchTerm === targetRoles.slice(0, 3).join(', ') ? '1.5px solid #2d6a4f' : '1px solid rgba(255, 255, 255, 0.9)',
+                      background: searchTerm === targetRoles.slice(0, 3).join(', ') ? 'rgba(45, 106, 79, 0.20)' : 'rgba(255, 255, 255, 0.70)',
+                      color: searchTerm === targetRoles.slice(0, 3).join(', ') ? '#1b4332' : 'var(--text-secondary)',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s',
+                      boxShadow: '0 1px 3px rgba(15, 40, 20, 0.05)',
+                    }}
+                  >
+                    ✨ All Saved Roles ({targetRoles.slice(0, 3).length})
+                  </button>
                   {targetRoles.map(role => (
                     <button
                       key={role}
                       type="button"
                       onClick={() => setSearchTerm(role)}
                       style={{
-                        padding: '4px 10px',
+                        padding: '5px 12px',
                         fontSize: '0.75rem',
-                        fontWeight: 600,
+                        fontWeight: 700,
                         borderRadius: '9999px',
-                        border: searchTerm === role ? '1px solid #06b6d4' : '1px solid var(--border-subtle)',
-                        background: searchTerm === role ? 'rgba(6, 182, 212, 0.15)' : 'rgba(255, 255, 255, 0.04)',
-                        color: searchTerm === role ? '#06b6d4' : 'var(--text-muted)',
+                        border: searchTerm === role ? '1.5px solid #4a6b28' : '1px solid rgba(255, 255, 255, 0.9)',
+                        background: searchTerm === role ? 'rgba(91, 132, 51, 0.16)' : 'rgba(255, 255, 255, 0.70)',
+                        color: searchTerm === role ? '#37501e' : 'var(--text-secondary)',
                         cursor: 'pointer',
                         transition: 'all 0.2s',
+                        boxShadow: '0 1px 3px rgba(15, 40, 20, 0.05)',
                       }}
                     >
                       {role}
@@ -260,6 +300,45 @@ export default function DiscoveryModal({ isOpen, onClose, profile, onDiscoveryCo
                   <label style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '8px' }}>
                     Target Location
                   </label>
+                  <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '8px' }}>
+                    <button
+                      type="button"
+                      onClick={() => setLocation(preferredLocs.slice(0, 2).join(', '))}
+                      style={{
+                        padding: '4px 10px',
+                        fontSize: '0.72rem',
+                        fontWeight: 700,
+                        borderRadius: '9999px',
+                        border: location === preferredLocs.slice(0, 2).join(', ') ? '1.5px solid #2d6a4f' : '1px solid rgba(255, 255, 255, 0.9)',
+                        background: location === preferredLocs.slice(0, 2).join(', ') ? 'rgba(45, 106, 79, 0.20)' : 'rgba(255, 255, 255, 0.70)',
+                        color: location === preferredLocs.slice(0, 2).join(', ') ? '#1b4332' : 'var(--text-secondary)',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s',
+                      }}
+                    >
+                      ✨ Top Saved ({preferredLocs.slice(0, 2).length})
+                    </button>
+                    {preferredLocs.slice(0, 4).map(loc => (
+                      <button
+                        key={loc}
+                        type="button"
+                        onClick={() => setLocation(loc)}
+                        style={{
+                          padding: '4px 10px',
+                          fontSize: '0.72rem',
+                          fontWeight: 700,
+                          borderRadius: '9999px',
+                          border: location === loc ? '1.5px solid #4a6b28' : '1px solid rgba(255, 255, 255, 0.9)',
+                          background: location === loc ? 'rgba(91, 132, 51, 0.16)' : 'rgba(255, 255, 255, 0.70)',
+                          color: location === loc ? '#37501e' : 'var(--text-secondary)',
+                          cursor: 'pointer',
+                          transition: 'all 0.2s',
+                        }}
+                      >
+                        {loc}
+                      </button>
+                    ))}
+                  </div>
                   <div style={{ position: 'relative' }}>
                     <MapPin size={16} color="var(--text-muted)" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
                     <input
@@ -269,7 +348,7 @@ export default function DiscoveryModal({ isOpen, onClose, profile, onDiscoveryCo
                       style={{ paddingLeft: '36px' }}
                       value={location}
                       onChange={e => setLocation(e.target.value)}
-                      placeholder="e.g. India, Remote, Hyderabad"
+                      placeholder="e.g. India, Remote, Hyderabad, Bengaluru"
                     />
                   </div>
                 </div>
@@ -279,7 +358,7 @@ export default function DiscoveryModal({ isOpen, onClose, profile, onDiscoveryCo
                     <label style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
                       Min ATS Match Score
                     </label>
-                    <span style={{ fontSize: '0.85rem', fontWeight: 700, color: '#06b6d4' }}>
+                    <span style={{ fontSize: '0.85rem', fontWeight: 700, color: '#047857' }}>
                       {minMatchScore}%
                     </span>
                   </div>
@@ -291,11 +370,11 @@ export default function DiscoveryModal({ isOpen, onClose, profile, onDiscoveryCo
                     step="5"
                     value={minMatchScore}
                     onChange={e => setMinMatchScore(e.target.value)}
-                    style={{ width: '100%', marginTop: '8px', accentColor: '#06b6d4' }}
+                    style={{ width: '100%', marginTop: '8px', accentColor: '#4a6b28' }}
                   />
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '4px' }}>
                     <span>50% (Permissive)</span>
-                    <span>75% (Recommended)</span>
+                    <span>70% (Recommended)</span>
                     <span>90% (Strict)</span>
                   </div>
                 </div>
@@ -305,9 +384,9 @@ export default function DiscoveryModal({ isOpen, onClose, profile, onDiscoveryCo
               <div>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
                   <label style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <Clock size={15} color="#06b6d4" /> Posting Freshness Filter
+                    <Clock size={15} color="#4a6b28" /> Posting Freshness Filter
                   </label>
-                  <span style={{ fontSize: '0.74rem', fontWeight: 700, color: '#10b981' }}>
+                  <span style={{ fontSize: '0.74rem', fontWeight: 700, color: '#047857' }}>
                     {freshnessDays === 1 ? '⚡ 24h Filter Active' : freshnessDays === 3 ? '3 Days Active' : freshnessDays === 7 ? '7 Days Active' : 'All Postings'}
                   </span>
                 </div>
@@ -339,19 +418,20 @@ export default function DiscoveryModal({ isOpen, onClose, profile, onDiscoveryCo
                         onClick={() => togglePortal(portal.id)}
                         style={{
                           padding: '10px',
-                          borderRadius: '10px',
-                          border: isSelected ? '1px solid #06b6d4' : '1px solid var(--border-subtle)',
-                          background: isSelected ? 'rgba(6, 182, 212, 0.1)' : 'rgba(255, 255, 255, 0.03)',
+                          borderRadius: '12px',
+                          border: isSelected ? '1.5px solid #4a6b28' : '1px solid rgba(255, 255, 255, 0.9)',
+                          background: isSelected ? 'rgba(91, 132, 51, 0.12)' : 'rgba(255, 255, 255, 0.65)',
                           cursor: 'pointer',
                           display: 'flex',
                           alignItems: 'center',
                           gap: '10px',
                           transition: 'all 0.2s ease',
+                          boxShadow: '0 2px 6px rgba(15, 40, 20, 0.05)',
                         }}
                       >
                         <span style={{ fontSize: '1.3rem' }}>{portal.icon}</span>
                         <div>
-                          <div style={{ fontSize: '0.85rem', fontWeight: 700, color: isSelected ? '#06b6d4' : 'var(--text-primary)' }}>
+                          <div style={{ fontSize: '0.85rem', fontWeight: 700, color: isSelected ? '#37501e' : 'var(--text-main)' }}>
                             {portal.label}
                           </div>
                           <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>
@@ -369,10 +449,11 @@ export default function DiscoveryModal({ isOpen, onClose, profile, onDiscoveryCo
                 display: 'grid', 
                 gridTemplateColumns: '1fr 1fr', 
                 gap: '16px', 
-                background: 'rgba(255, 255, 255, 0.02)', 
+                background: 'rgba(255, 255, 255, 0.65)', 
                 padding: '12px 16px', 
-                borderRadius: '10px', 
-                border: '1px solid var(--border-subtle)' 
+                borderRadius: '14px', 
+                border: '1.5px solid rgba(255, 255, 255, 0.95)',
+                boxShadow: '0 2px 8px rgba(15, 40, 20, 0.04)',
               }}>
                 <div>
                   <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>
@@ -597,11 +678,12 @@ export default function DiscoveryModal({ isOpen, onClose, profile, onDiscoveryCo
                 onClick={handleStartDiscovery}
                 disabled={isScanning}
                 style={{
-                  background: 'linear-gradient(135deg, #06b6d4 0%, #3b82f6 100%)',
-                  border: 'none',
+                  background: 'linear-gradient(135deg, #688e3c 0%, #4a6c27 100%)',
+                  border: '1.5px solid rgba(255, 255, 255, 0.40)',
                   color: '#ffffff',
                   fontWeight: 700,
-                  boxShadow: '0 0 16px rgba(6, 182, 212, 0.4)',
+                  borderRadius: '9999px',
+                  boxShadow: '0 4px 16px rgba(45, 75, 20, 0.30)',
                   display: 'flex',
                   alignItems: 'center',
                   gap: '6px',
@@ -618,9 +700,11 @@ export default function DiscoveryModal({ isOpen, onClose, profile, onDiscoveryCo
               className="btn btn-primary"
               onClick={handleResetAndClose}
               style={{
-                background: 'linear-gradient(135deg, #06b6d4 0%, #3b82f6 100%)',
+                background: 'linear-gradient(135deg, #688e3c 0%, #4a6c27 100%)',
+                border: '1.5px solid rgba(255, 255, 255, 0.40)',
                 color: '#ffffff',
                 fontWeight: 700,
+                borderRadius: '9999px',
                 display: 'flex',
                 alignItems: 'center',
                 gap: '6px',

@@ -4,11 +4,25 @@
  */
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
+// Must match API_TOKEN in backend/.env. Leave unset when the backend has no API_TOKEN.
+const API_TOKEN = import.meta.env.VITE_API_TOKEN || '';
+
+// EventSource, <a href> and <iframe> cannot send headers, so the token goes in the query string.
+function withToken(url) {
+  if (!API_TOKEN) return url;
+  const sep = url.includes('?') ? '&' : '?';
+  return `${url}${sep}api_token=${encodeURIComponent(API_TOKEN)}`;
+}
+
+function authHeaders() {
+  return API_TOKEN ? { 'X-API-Token': API_TOKEN } : {};
+}
 
 async function request(endpoint, options = {}) {
   const url = `${API_BASE}${endpoint}`;
   const defaultHeaders = {
     'Content-Type': 'application/json',
+    ...authHeaders(),
   };
 
   const response = await fetch(url, {
@@ -45,14 +59,24 @@ export const api = {
   // Health
   checkHealth: () => request('/api/health'),
 
-  // Pipeline Metrics & Comprehensive Analytics
+  // Pipeline Metrics
   getMetrics: () => request('/api/metrics'),
-  getAnalytics: () => request('/api/analytics'),
 
   // Jobs
-  getJobs: (status = null) => {
-    const query = status ? `?status=${encodeURIComponent(status)}` : '';
+  getJobs: (status = null, daysLimit = 7) => {
+    const params = new URLSearchParams();
+    if (status) params.append('status', status);
+    if (daysLimit !== null && daysLimit !== undefined) params.append('days_limit', daysLimit);
+    const query = params.toString() ? `?${params.toString()}` : '';
     return request(`/api/jobs${query}`);
+  },
+
+  getJobsHistory: (year = null, month = null) => {
+    const params = new URLSearchParams();
+    if (year) params.append('year', year);
+    if (month) params.append('month', month);
+    const query = params.toString() ? `?${params.toString()}` : '';
+    return request(`/api/jobs/history${query}`);
   },
 
   getJobDetail: (jobId) => request(`/api/jobs/${jobId}`),
@@ -86,6 +110,7 @@ export const api = {
     formData.append('file', file);
     const response = await fetch(`${API_BASE}/api/profile/upload-resume`, {
       method: 'POST',
+      headers: authHeaders(),
       body: formData,
     });
     if (!response.ok) {
@@ -99,8 +124,8 @@ export const api = {
     return response.json();
   },
 
-  downloadMasterResumePdfUrl: () => `${API_BASE}/api/profile/download-resume-pdf`,
-  downloadTailoredResumePdfUrl: (jobId) => `${API_BASE}/api/jobs/${jobId}/tailored-resume-pdf`,
+  downloadMasterResumePdfUrl: () => withToken(`${API_BASE}/api/profile/download-resume-pdf`),
+  downloadTailoredResumePdfUrl: (jobId) => withToken(`${API_BASE}/api/jobs/${jobId}/tailored-resume-pdf`),
 
   // Autonomous Discovery (Phase 3)
   discoverJobs: (params = {}) => request('/api/discover', {
@@ -142,9 +167,13 @@ export const api = {
   getNaukriSessionStatus: () => request('/api/portals/naukri/session-status'),
   launchNaukriSession: () => request('/api/portals/naukri/launch-session', { method: 'POST' }),
 
+  // Portal Persistent Session (Indeed Safe Login)
+  getIndeedSessionStatus: () => request('/api/portals/indeed/session-status'),
+  launchIndeedSession: () => request('/api/portals/indeed/launch-session', { method: 'POST' }),
+
   // Sub-Phase 5.1: Server-Sent Events (SSE) Real-Time Subscription
   subscribeToEvents: (topic = 'all', onEvent, onError) => {
-    const url = `${API_BASE}/api/events/stream?topic=${encodeURIComponent(topic)}`;
+    const url = withToken(`${API_BASE}/api/events/stream?topic=${encodeURIComponent(topic)}`);
     const eventSource = new EventSource(url);
 
     eventSource.onmessage = (e) => {

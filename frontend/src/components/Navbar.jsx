@@ -54,7 +54,7 @@ export default function Navbar({
                 fontSize: '1.05rem',
                 fontWeight: 800,
                 letterSpacing: '-0.02em',
-                background: 'linear-gradient(90deg, #0f172a 0%, #334155 100%)',
+                background: 'linear-gradient(90deg, #14281b 0%, #27422f 100%)',
                 WebkitBackgroundClip: 'text',
                 WebkitTextFillColor: 'transparent',
               }}>
@@ -84,10 +84,11 @@ export default function Navbar({
           <div className="navbar-tabs-group" style={{
             display: 'flex',
             alignItems: 'center',
-            background: 'rgba(15, 23, 42, 0.05)',
+            background: 'rgba(255, 255, 255, 0.70)',
             padding: '4px',
-            borderRadius: '10px',
-            border: '1px solid var(--border-subtle)',
+            borderRadius: '12px',
+            border: '1.5px solid rgba(255, 255, 255, 0.95)',
+            boxShadow: '0 2px 6px rgba(15, 40, 20, 0.04)',
           }}>
             <button
               id="tab-btn-pipeline"

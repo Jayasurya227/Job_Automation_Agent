@@ -49,6 +49,8 @@ class RateLimiter:
                     or "503" in err_str
                     or "unavailable" in err_str
                     or "high demand" in err_str
+                    or "529" in err_str
+                    or "overloaded" in err_str
                 )
                 
                 if is_rate_limited and retries < self.max_retries:

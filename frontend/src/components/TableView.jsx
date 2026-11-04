@@ -100,21 +100,22 @@ export default function TableView({
 
                     {/* Portal */}
                     <td style={{ padding: '12px 16px' }}>
-                      <span className="badge badge-indigo" style={{ fontSize: '0.7rem' }}>
-                        {job.portal_name || 'Manual'}
+                      <span className={`badge ${job.portal_name?.toLowerCase() === 'indeed' ? 'badge-cyan' : 'badge-indigo'}`} style={{ fontSize: '0.7rem' }}>
+                        {job.portal_name?.toLowerCase() === 'indeed' ? '🌐 Indeed' : (job.portal_name?.toLowerCase() === 'naukri' ? '🇮🇳 Naukri' : (job.portal_name || 'Manual'))}
                       </span>
                     </td>
 
                     {/* Status */}
                     <td style={{ padding: '12px 16px' }} onClick={(e) => e.stopPropagation()}>
                       <select
-                        value={job.status === 'Applied' ? 'Applied' : 'Saved'}
+                        value={job.status || 'Ready'}
                         onChange={(e) => onStatusChange(job.id, e.target.value)}
                         className="form-select"
                         style={{ padding: '4px 8px', fontSize: '0.78rem', width: 'auto' }}
                       >
-                        <option value="Saved">Discovered</option>
-                        <option value="Applied">Applied</option>
+                        <option value="Ready">⭐ Review</option>
+                        <option value="Applied">⚡ Applied</option>
+                        <option value="Archived">📁 Archive</option>
                       </select>
                     </td>
 

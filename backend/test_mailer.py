@@ -20,7 +20,14 @@ from app.agent.mailer import (
     PortalAccountConfig,
 )
 from app.db.session import init_db
+from app.agent import mailer
 from main import app
+
+
+@pytest.fixture(autouse=True)
+def isolated_settings(tmp_path, monkeypatch):
+    """Point settings at a temp file so tests never overwrite the user's real account_settings.json."""
+    monkeypatch.setattr(mailer, "SETTINGS_FILE", tmp_path / "account_settings.json")
 
 
 @pytest.fixture(scope="module")
@@ -63,6 +70,10 @@ def test_settings_persistence_and_masking():
     assert "••••" in masked["portals"]["linkedin"]["password"]
 
 
+PAUSED = pytest.mark.skip(reason="Cold email / SMTP outreach is paused in app/agent/mailer.py")
+
+
+@PAUSED
 def test_daily_rate_limiting():
     """Verify daily cap prevents sending more than the configured limit."""
     today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -81,6 +92,7 @@ def test_daily_rate_limiting():
     assert allowed is True
 
 
+@PAUSED
 def test_smtp_connection_validation_with_mock():
     """Verify test_smtp_connection handles successful handshakes and failures."""
     # Test missing credentials
@@ -103,6 +115,7 @@ def test_smtp_connection_validation_with_mock():
         instance.login.assert_called_once_with("test@gmail.com", "abcdefghijklmnop")
 
 
+@PAUSED
 def test_send_cold_email_with_pdf_attachment():
     """Verify cold email packaging with mock delivery and attachment."""
     # Ensure active settings exist
@@ -166,7 +179,8 @@ def test_fastapi_settings_and_outreach_endpoints(client):
     assert res_data["status"] == "success"
     assert res_data["settings"]["smtp"]["sender_email"] == "updated.candidate@gmail.com"
     assert res_data["settings"]["portals"]["linkedin"]["username"] == "test_linkedin_user"
-    assert res_data["settings"]["portals"]["linkedin"]["has_password"] is True
+    # Portal passwords are never stored (portal login is the browser session)
+    assert res_data["settings"]["portals"]["linkedin"]["has_password"] is False
 
 
 if __name__ == "__main__":

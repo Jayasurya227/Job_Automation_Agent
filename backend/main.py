@@ -4,11 +4,20 @@ Purpose: Step 2.2 FastAPI Backend Server - Central API connecting AI Brain, Data
 Standards: Rule 1 (Zero Blind Trust), Rule 2 (Strict Pydantic Validation & Locked CORS),
            Rule 3 (Low Code & High Accuracy), Rule 4 (Standard Layout), Rule 5 (Production Reliability).
 """
+import sys
 import json
 import asyncio
 import logging
 import os
 import re
+import secrets
+
+# Ensure Windows ProactorEventLoop is used so Playwright child processes don't raise NotImplementedError
+if sys.platform == "win32":
+    try:
+        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+    except Exception:
+        pass
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,7 +30,7 @@ from sqlalchemy.orm import Session
 
 logger = logging.getLogger("main")
 
-from app.config import CORS_ORIGINS, OUTPUT_DIR, BASE_DIR
+from app.config import CORS_ORIGINS, OUTPUT_DIR, BASE_DIR, READY_MATCH_THRESHOLD
 from app.db.session import init_db, get_db
 
 DbSession = Annotated[Session, Depends(get_db)]
@@ -44,7 +53,6 @@ from app.schemas.api import (
     WorkflowStatusResponse,
     SaveQARequest,
     QAItemResponse,
-    DetailedAnalyticsResponse,
     UpdateAccountSettingsRequest,
 )
 from app.agent.mailer import (
@@ -58,6 +66,8 @@ from app.agent.mailer import (
 async def lifespan(app: FastAPI):
     """Initializes SQLite database tables and registers main event loop with EventBus and AutoPilot."""
     init_db()
+    if not _API_TOKEN:
+        logger.warning("API_TOKEN is not set: the API accepts requests without authentication. Set API_TOKEN in backend/.env to lock it down.")
     try:
         loop = asyncio.get_running_loop()
         event_bus.set_event_loop(loop)
@@ -82,8 +92,10 @@ app = FastAPI(
 # -------------------------------------------------------------------
 # Optional API Token Middleware (Security Fix)
 # Set API_TOKEN in backend/.env to enable token-based auth.
-# If API_TOKEN is NOT set, the server remains open for local use.
+# If API_TOKEN is NOT set, the server remains open for local use (a warning is logged at startup).
 # Clients must send: X-API-Token: <your-token>
+# Browser-initiated requests that cannot set headers (EventSource SSE, file links, iframes)
+# may pass the token as the ?api_token=<your-token> query parameter instead.
 # Health check is always public so the frontend can detect server status.
 # -------------------------------------------------------------------
 _API_TOKEN: str = os.getenv("API_TOKEN", "")
@@ -95,8 +107,8 @@ async def optional_api_token_guard(request: Request, call_next):
         # Always allow health check and OPTIONS (CORS preflight)
         skip_paths = {"/", "/api/health"}
         if request.method != "OPTIONS" and request.url.path not in skip_paths:
-            client_token = request.headers.get("X-API-Token", "")
-            if client_token != _API_TOKEN:
+            client_token = request.headers.get("X-API-Token", "") or request.query_params.get("api_token", "")
+            if not secrets.compare_digest(client_token, _API_TOKEN):
                 return JSONResponse(
                     status_code=401,
                     content={"detail": "Unauthorized: Invalid or missing X-API-Token header."}
@@ -180,7 +192,7 @@ def analyze_job(req: AnalyzeJobRequest, db: DbSession):
     Unified Autonomous Pipeline Endpoint:
     1. AI Scorer evaluates match score and skills.
     2. Saves Job and Evaluation to SQLite.
-    3. If score >= 60%, automatically tailors resume and generates cold outreach.
+    3. If score >= READY_MATCH_THRESHOLD, the job is marked Ready with the master resume attached.
     4. Saves Application tracking record to SQLite.
     """
     # 1. AI ATS Scoring (Phase 1 AI Brain)
@@ -211,23 +223,14 @@ def analyze_job(req: AnalyzeJobRequest, db: DbSession):
     linkedin_note = ""
     app_status = "Saved"
 
-    # 4. Auto-tailor ATS resume and generate cold outreach for viable roles (score >= 60%)
-    if match_result.match_score >= 60:
-        from app.agent.tailorer import tailor_resume
-        tailor_out = tailor_resume(req.job_description, match_result)
-        tex_path = tailor_out.get("tex_path", "")
+    # 4. Use master ATS resume for viable roles (score >= READY_MATCH_THRESHOLD)
+    if match_result.match_score >= READY_MATCH_THRESHOLD:
         master_pdf = BASE_DIR / "data" / "uploaded_resume.pdf"
-        pdf_path = tailor_out.get("pdf_path") or (str(master_pdf) if master_pdf.exists() else None)
-
-        outreach_pkg = outreach.generate_outreach(
-            job_description=req.job_description,
-            match_result=match_result,
-            recipient_role=req.recipient_role
-        )
-        cold_subject = outreach_pkg.subject_line
-        cold_body = outreach_pkg.cold_email_body
-        linkedin_note = outreach_pkg.linkedin_connection_note
-        app_status = "Tailored"
+        pdf_path = str(master_pdf) if master_pdf.exists() else None
+        cold_subject = ""
+        cold_body = ""
+        linkedin_note = ""
+        app_status = "Ready"
 
     # 5. Persist Application Pipeline Tracking Record
     crud.create_or_update_application(
@@ -269,17 +272,20 @@ async def trigger_job_discovery(req: DiscoverJobsRequest):
     1. Scrapes fresh postings across requested portals (LinkedIn, Indeed, Naukri, Glassdoor).
     2. Smart deduplication filters out already-tracked jobs in SQLite.
     3. Gemini evaluates ATS match score.
-    4. Auto-triages high matches (>= 75%) to 'Ready' + Tailors LaTeX Resume + Generates Outreach.
-    5. Auto-triages low matches (< 75%) to 'Archived'.
+    4. Auto-triages high matches (>= READY_MATCH_THRESHOLD) to 'Ready' with the master resume attached.
+    5. Auto-triages low matches (below READY_MATCH_THRESHOLD) to 'Archived'.
     6. Returns structured IngestionReport.
     """
     try:
         report = await discover_and_ingest(
             search_term=req.search_term,
+            search_terms=req.search_terms,
             location=req.location,
+            locations=req.locations,
             portals=req.portals,
             results_wanted=req.results_wanted,
             freshness_days=req.freshness_days if req.freshness_days is not None else 1,
+            experience_level=req.experience_level,
             min_match_score=req.min_match_score,
             max_jobs_to_process=req.max_process,
         )
@@ -291,11 +297,13 @@ async def trigger_job_discovery(req: DiscoverJobsRequest):
 def list_all_jobs(
     db: DbSession,
     status_filter: Optional[str] = Query(None, alias="status"),
+    days_limit: Optional[int] = Query(7, description="Rolling active window limit in days (default 7 days, 0 or null for all)"),
     skip: int = 0,
     limit: int = 100,
 ):
-    """Retrieves all tracked jobs from SQLite with evaluations and pipeline status."""
-    jobs = crud.list_jobs(db=db, skip=skip, limit=limit, status=status_filter)
+    """Retrieves tracked jobs from SQLite with rolling 7-day active filter, evaluations and pipeline status."""
+    effective_days = days_limit if (days_limit is not None and days_limit > 0) else None
+    jobs = crud.list_jobs(db=db, skip=skip, limit=limit, status=status_filter, days_limit=effective_days)
     results = []
     for j in jobs:
         ev = j.evaluation
@@ -313,9 +321,28 @@ def list_all_jobs(
             tailored_resume_tex_path=app_rec.tailored_resume_tex_path if app_rec else "",
             tailored_resume_pdf_path=app_rec.tailored_resume_pdf_path if app_rec else None,
             applied_at=app_rec.applied_at.isoformat() if app_rec and app_rec.applied_at else None,
+            notes=app_rec.notes if app_rec else None,
             created_at=j.created_at.isoformat()
         ))
     return results
+
+@app.get("/api/jobs/history", tags=["Pipeline"])
+def get_jobs_history(
+    db: DbSession,
+    year: Optional[int] = Query(None, description="Filter history by 4-digit year (e.g. 2026)"),
+    month: Optional[int] = Query(None, description="Filter history by month (1-12)"),
+):
+    """Retrieves full historical jobs categorized by month & year into Discovered and Applied."""
+    return crud.get_jobs_history(db=db, year=year, month=month)
+
+def _load_candidate_info():
+    """Returns the candidate's personal info from profile.json, or an empty default if unavailable."""
+    from app.schemas.profile import PersonalInfo
+    from app.agent.scorer import load_profile
+    try:
+        return load_profile().personal_info
+    except Exception:
+        return PersonalInfo(name="Candidate")
 
 @app.get("/api/jobs/{job_id}", response_model=JobDetailResponse, tags=["Pipeline"])
 def get_job_detail(job_id: int, db: DbSession):
@@ -341,24 +368,18 @@ def get_job_detail(job_id: int, db: DbSession):
     if not pdf_path and master_pdf.exists():
         pdf_path = str(master_pdf)
 
-    # Dynamic fallback for candidate name & cold email subject/body
-    candidate_name = "Rayavaram Jayasurya"
-    try:
-        from app.agent.scorer import load_profile
-        candidate_name = load_profile().personal_info.name
-    except Exception:
-        pass
+    # Candidate identity comes from profile.json, never from hardcoded values
+    candidate = _load_candidate_info()
+    candidate_name = candidate.name
 
     cold_subj = (app_rec.cold_email_subject if app_rec and app_rec.cold_email_subject else f"Application: {job.job_title} - {candidate_name}")
     cold_body = (app_rec.cold_email_body if app_rec and app_rec.cold_email_body else (
         f"Dear Hiring Team,\n\n"
         f"I am writing to express my strong interest in the {job.job_title} position at {job.company_name}.\n\n"
-        f"With proven hands-on experience in Python, building agentic AI workflows, and developing scalable architectures, "
-        f"I am confident in delivering high impact immediately. I have a 0-day notice period and am available to join right away.\n\n"
         f"Please find my resume attached below for your review. I look forward to speaking with you.\n\n"
         f"Best regards,\n"
-        f"{candidate_name}\n"
-        f"Phone: +91 9381744883"
+        f"{candidate_name}"
+        + (f"\nPhone: {candidate.phone}" if candidate.phone else "")
     ))
 
     return JobDetailResponse(
@@ -430,8 +451,8 @@ def delete_tracked_job(job_id: int, db: DbSession):
 
 @app.get("/api/metrics", response_model=PipelineMetrics, tags=["Dashboard"])
 def get_pipeline_metrics(db: DbSession):
-    """Calculates live metrics for the dashboard cards."""
-    jobs = crud.list_jobs(db=db, skip=0, limit=1000)
+    """Calculates live metrics for the dashboard cards (active 7-day rolling window)."""
+    jobs = crud.list_jobs(db=db, skip=0, limit=1000, days_limit=7)
     total = len(jobs)
     scores = [j.evaluation.match_score for j in jobs if j.evaluation]
     avg_score = round(sum(scores) / len(scores), 1) if scores else 0.0
@@ -439,7 +460,7 @@ def get_pipeline_metrics(db: DbSession):
     applied_count = sum(1 for j in jobs if j.applications and j.applications[0].status == "Applied")
     interview_count = sum(1 for j in jobs if j.applications and j.applications[0].status == "Interview")
     offer_count = sum(1 for j in jobs if j.applications and j.applications[0].status == "Offer")
-    ready_count = sum(1 for j in jobs if j.applications and j.applications[0].status == "Tailored")
+    ready_count = sum(1 for j in jobs if j.applications and j.applications[0].status == "Ready")
 
     return PipelineMetrics(
         total_jobs=total,
@@ -450,13 +471,6 @@ def get_pipeline_metrics(db: DbSession):
         offer_count=offer_count
     )
 
-@app.get("/api/analytics", response_model=DetailedAnalyticsResponse, tags=["Dashboard"])
-def get_comprehensive_analytics(db: DbSession):
-    """
-    Sub-Phase 5.3: Detailed Pipeline Analytics & Application Funnel Metrics.
-    Returns conversion funnel, portal distribution, application velocity, and skill gap radar.
-    """
-    return crud.get_detailed_analytics(db=db)
 
 @app.get("/api/profile", response_model=CandidateProfile, tags=["Profile"])
 def get_candidate_profile():
@@ -473,6 +487,11 @@ def update_candidate_profile(profile_data: CandidateProfile):
     profile_file = BASE_DIR / "profile.json"
     with open(profile_file, "w", encoding="utf-8") as f:
         json.dump(profile_data.model_dump(), f, indent=2)
+    try:
+        from app.agent.scheduler import autopilot_scheduler
+        autopilot_scheduler.nudge()
+    except Exception:
+        pass
     return profile_data
 
 @app.post("/api/profile/upload-resume", tags=["Profile"])
@@ -493,19 +512,17 @@ async def upload_candidate_resume(file: UploadFile = File(...)):
     with open(save_path, "wb") as f:
         f.write(contents)
 
-    # 2. Extract text from PDF
+    # 2. Extract text from PDF (as fallback)
+    text = ""
     try:
         from app.agent.resume_parser import extract_text_from_pdf, parse_resume_content
         text = extract_text_from_pdf(contents)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to read PDF document: {str(e)}")
+        logger.warning(f"Text extraction warning: {e}")
 
-    if not text.strip():
-        raise HTTPException(status_code=400, detail="Could not extract text from PDF. Ensure the PDF contains readable text.")
-
-    # 3. AI extraction & merge into profile.json
+    # 3. AI extraction (direct multimodal PDF with fallback) & merge into profile.json
     try:
-        updated_profile = parse_resume_content(text)
+        updated_profile = parse_resume_content(resume_text=text, pdf_bytes=contents)
         return {
             "status": "success",
             "message": f"Resume '{file.filename}' parsed and saved to Master Profile!",
@@ -523,13 +540,13 @@ def download_candidate_resume_pdf(inline: bool = False):
     Supports inline=True for modal iframe preview and inline=False for download.
     """
     profile_file = BASE_DIR / "profile.json"
-    candidate_name = "Rayavaram_Jayasurya"
+    candidate_name = "Candidate"
     profile_dict = {}
     if profile_file.exists():
         try:
             with open(profile_file, "r", encoding="utf-8") as f:
                 profile_dict = json.load(f)
-            candidate_name = profile_dict.get("personal_info", {}).get("name", "Rayavaram_Jayasurya")
+            candidate_name = profile_dict.get("personal_info", {}).get("name", "Candidate")
         except Exception:
             pass
 
@@ -584,9 +601,10 @@ def download_tailored_resume_pdf(job_id: int, db: DbSession, inline: bool = Fals
     # Use uploaded master resume directly
     uploaded_pdf = BASE_DIR / "data" / "uploaded_resume.pdf"
     if uploaded_pdf.exists():
+        safe_name = re.sub(r"[^a-zA-Z0-9_-]", "_", _load_candidate_info().name)
         return FileResponse(
             path=str(uploaded_pdf),
-            filename="Rayavaram_Jayasurya_Resume.pdf" if not inline else None,
+            filename=f"{safe_name}_Resume.pdf" if not inline else None,
             media_type="application/pdf",
             content_disposition_type="inline" if inline else "attachment"
         )
@@ -628,12 +646,8 @@ async def trigger_apply_workflow(req: ApplyWorkflowRequest, db: DbSession):
 
     match_score = ev.match_score if ev else None
 
-    # If job has no live URL, check if mock test portal or use direct fallback
-    job_target_url = job.job_url
-    if not job_target_url:
-        mock_file = BASE_DIR / "data" / "mock_easy_apply.html"
-        if mock_file.exists():
-            job_target_url = str(mock_file)
+    # No mock/fallback target: a job without a real URL is reported as NO_URL by the workflow
+    job_target_url = job.job_url or ""
 
     # Capture local vars for thread (db session must NOT be passed into thread)
     _job_title = job.job_title
@@ -652,7 +666,7 @@ async def trigger_apply_workflow(req: ApplyWorkflowRequest, db: DbSession):
             job_title=_job_title,
             company_name=_company_name,
             job_description=_job_description,
-            job_url=job_target_url or "",
+            job_url=job_target_url,
             portal_name=_portal_name,
             location=_location,
             job_id=_job_id,
@@ -663,6 +677,7 @@ async def trigger_apply_workflow(req: ApplyWorkflowRequest, db: DbSession):
             cold_email_subject=cold_subj,
             cold_email_body=cold_body,
             linkedin_connection_note=linkedin_note,
+            is_manual_override=True,
         )
 
         state = wf_res["state"]
@@ -794,9 +809,10 @@ def update_user_settings(req: UpdateAccountSettingsRequest):
             curr = settings.portals[p_name]
             if p_input.username is not None:
                 curr.username = p_input.username.strip()
-            if p_input.password is not None and p_input.password != "••••••••••••":
-                curr.password = p_input.password
-            curr.status = "connected" if (curr.username and curr.password) else "unconfigured"
+            # Portal passwords are never stored: the portal login is the persistent browser session.
+            # Any previously stored password is cleared here.
+            curr.password = ""
+            curr.status = "connected" if curr.username else "unconfigured"
 
     save_account_settings(settings)
     return {"status": "success", "message": "Settings updated successfully", "settings": get_masked_settings()}
@@ -815,9 +831,16 @@ def get_autopilot_status():
 @app.post("/api/autopilot/run-now", tags=["Auto-Pilot"])
 async def trigger_autopilot_now():
     """Immediately triggers an on-demand Auto-Pilot run in the background."""
-    from app.agent.scheduler import autopilot_scheduler
+    from app.agent.scheduler import autopilot_scheduler, get_portal_timeline_slot
+    slot = get_portal_timeline_slot()
     asyncio.create_task(autopilot_scheduler.execute_run(trigger_source="manual_run_now"))
-    return {"status": "started", "message": "Smart Auto-Pilot execution launched in background."}
+    return {
+        "status": "started",
+        "message": f"Smart Auto-Pilot launched for {slot['portal_label']} ({slot['slot_label']}) in background.",
+        "portal": slot["current_portal"],
+        "portal_label": slot["portal_label"],
+        "slot_label": slot["slot_label"]
+    }
 
 
 # =====================================================================
@@ -827,27 +850,49 @@ async def trigger_autopilot_now():
 def get_naukri_session_status():
     """Checks if a valid persistent browser session exists for Naukri."""
     import json
+    from datetime import datetime, timezone
     from app.config import DATA_DIR
     session_dir = DATA_DIR / "browser_session"
     marker_file = session_dir / "session_verified.json"
     
-    # A true persistent session requires user verification via login_session.py
     is_connected = marker_file.exists()
     verified_data = {}
+    is_expired = False
+    age_days = 0.0
+    
     if is_connected:
         try:
             verified_data = json.loads(marker_file.read_text(encoding="utf-8"))
-        except Exception:
-            pass
+            verified_at_str = verified_data.get("verified_at")
+            if verified_at_str:
+                clean_dt_str = verified_at_str.replace("Z", "+00:00")
+                verified_dt = datetime.fromisoformat(clean_dt_str)
+                age_days = round((datetime.now(timezone.utc) - verified_dt).total_seconds() / 86400, 1)
+                # Naukri sessions expire after 25 days
+                if age_days > 25:
+                    is_expired = True
+                    is_connected = False
+        except Exception as e:
+            logger.debug(f"Error parsing verified_at: {e}")
             
+    status_label = "connected" if is_connected else ("expired" if is_expired else "unconfigured")
+    if is_connected:
+        message = f"Naukri persistent session active (Connected {age_days}d ago • OTP verified)"
+    elif is_expired:
+        message = f"Naukri session expired ({age_days} days old). Please click Re-login to refresh cookies."
+    else:
+        message = "No active Naukri session found. Please launch session login."
+
     return {
         "portal": "naukri",
         "connected": is_connected,
-        "status": "connected" if is_connected else "unconfigured",
+        "expired": is_expired,
+        "age_days": age_days,
+        "status": status_label,
         "session_dir": str(session_dir),
         "verified_at": verified_data.get("verified_at"),
         "cookie_count": verified_data.get("cookie_count", 0),
-        "message": "Naukri persistent session active (OTP verified)" if is_connected else "No active Naukri session found. Please launch session login."
+        "message": message
     }
 
 
@@ -857,7 +902,12 @@ async def launch_naukri_session():
     import subprocess
     import sys
     import os
-    from app.config import BASE_DIR
+    from app.config import BASE_DIR, DATA_DIR
+    from app.agent.browser import sanitize_session_preferences
+
+    # Pre-sanitize session directory to eliminate any off-screen window coordinates
+    session_dir = DATA_DIR / "browser_session"
+    sanitize_session_preferences(session_dir)
 
     script = BASE_DIR / "login_session.py"
 
@@ -887,6 +937,100 @@ async def launch_naukri_session():
     except Exception as e:
         logger.error(f"Failed to launch session window: {e}")
         return {"status": "error", "message": str(e)}
+
+
+@app.get("/api/portals/indeed/session-status", tags=["Portals"])
+def get_indeed_session_status():
+    """Checks if a valid persistent browser session exists for Indeed."""
+    import json
+    from datetime import datetime, timezone
+    from app.config import DATA_DIR
+    session_dir = DATA_DIR / "indeed_session"
+    marker_file = session_dir / "session_verified.json"
+    
+    is_connected = marker_file.exists()
+    verified_data = {}
+    is_expired = False
+    age_days = 0.0
+    
+    if is_connected:
+        try:
+            verified_data = json.loads(marker_file.read_text(encoding="utf-8"))
+            verified_at_str = verified_data.get("verified_at")
+            if verified_at_str:
+                clean_dt_str = verified_at_str.replace("Z", "+00:00")
+                verified_dt = datetime.fromisoformat(clean_dt_str)
+                age_days = round((datetime.now(timezone.utc) - verified_dt).total_seconds() / 86400, 1)
+                # Indeed sessions expire after 30 days
+                if age_days > 30:
+                    is_expired = True
+                    is_connected = False
+        except Exception as e:
+            logger.debug(f"Error parsing indeed verified_at: {e}")
+            
+    status_label = "connected" if is_connected else ("expired" if is_expired else "unconfigured")
+    if is_connected:
+        message = f"Indeed persistent session active (Connected {age_days}d ago • Logged in)"
+    elif is_expired:
+        message = f"Indeed session expired ({age_days} days old). Please click Re-login to refresh cookies."
+    else:
+        message = "No active Indeed session found. Please launch session login."
+
+    return {
+        "portal": "indeed",
+        "connected": is_connected,
+        "expired": is_expired,
+        "age_days": age_days,
+        "status": status_label,
+        "session_dir": str(session_dir),
+        "verified_at": verified_data.get("verified_at"),
+        "cookie_count": verified_data.get("cookie_count", 0),
+        "message": message
+    }
+
+
+@app.post("/api/portals/indeed/launch-session", tags=["Portals"])
+async def launch_indeed_session():
+    """Launches an interactive headed browser for safe one-time manual login for Indeed."""
+    import subprocess
+    import sys
+    import os
+    from app.config import BASE_DIR, DATA_DIR
+    from app.agent.browser import sanitize_session_preferences
+
+    # Pre-sanitize Indeed session directory to prevent off-screen coordinates
+    session_dir = DATA_DIR / "indeed_session"
+    sanitize_session_preferences(session_dir)
+
+    script = BASE_DIR / "login_session.py"
+    venv_python = BASE_DIR / "venv" / "Scripts" / "python.exe"
+    python_exe = str(venv_python) if venv_python.exists() else sys.executable
+    env = os.environ.copy()
+
+    try:
+        if sys.platform == "win32":
+            subprocess.Popen(
+                f'start "Indeed Safe Login Session" cmd.exe /k ""{python_exe}" "{script}" --indeed"',
+                shell=True,
+                cwd=str(BASE_DIR),
+                env=env,
+            )
+        else:
+            subprocess.Popen(
+                [python_exe, str(script), "--indeed"],
+                cwd=str(BASE_DIR),
+                env=env,
+            )
+        return {
+            "status": "launched",
+            "message": "Headed Chrome window launched on desktop. Please log into Indeed and press ENTER in the terminal.",
+            "portal": "indeed"
+        }
+    except Exception as e:
+        logger.error(f"Failed to launch Indeed session login: {e}")
+        return {"status": "error", "message": str(e)}
+
+
 
 
 

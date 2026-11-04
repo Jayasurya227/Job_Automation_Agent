@@ -14,16 +14,15 @@ import logging
 from typing import Dict, Any, Optional, List, Callable, TypedDict
 from pathlib import Path
 
-from dotenv import load_dotenv
-from google.genai import types as genai_types
-
 try:
-    from app.config import DEFAULT_MODEL
+    from app.config import DEFAULT_MODEL, claude_client
+    from app.agent.llm import response_text
     from app.agent.scorer import load_profile
     from app.db.session import SessionLocal
     from app.db import crud
 except ImportError:
-    from ..config import DEFAULT_MODEL
+    from ..config import DEFAULT_MODEL, claude_client
+    from .llm import response_text
     from .scorer import load_profile
     from ..db.session import SessionLocal
     from ..db import crud
@@ -189,71 +188,77 @@ def generate_ai_screening_answer(
     job_title: str = "",
     company_name: str = "",
     job_description: str = "",
+    field_type: str = "text",
+    options: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """
-    Generates a truthful, candidate-grounded answer using Gemini when question is unseen.
+    Generates a truthful, candidate-grounded answer using Claude Haiku when question is unseen.
     Caches the answer in SQLite memory bank for future zero-latency reuse.
     """
-    load_dotenv()
-    api_key = os.getenv("GEMINI_API_KEY")
     profile = load_profile()
 
-    if not api_key:
-        logger.warning("No GEMINI_API_KEY; returning fallback candidate answer.")
-        return {
-            "answer": "Yes, I have relevant hands-on project experience aligned with this requirement.",
-            "source": "fallback_no_api_key",
-            "confidence": 0.5,
-            "category": "General"
-        }
-
-    # Use the new google-genai SDK (google.generativeai is deprecated and EOL)
-    try:
-        from google import genai as new_genai
-        client = new_genai.Client(api_key=api_key)
-    except Exception as e:
-        logger.error(f"Failed to initialize Gemini client: {e}")
-        return {
-            "answer": "Yes, I have relevant hands-on engineering experience from my verified projects.",
-            "source": "fallback_error",
-            "confidence": 0.5,
-            "category": "General"
-        }
-
     system_instruction = (
-        "You are representing candidate Jai in a job application screening form.\n"
-        "Your goal is to provide a concise, direct, professional answer (1-3 sentences max) to the screening question.\n\n"
-        "CRITICAL RULES:\n"
-        "1. ZERO HALLUCINATION: Only use verified facts from the candidate's profile.\n"
-        "2. CANDIDATE PROFILE HIGHLIGHTS:\n"
-        f"   - Name: {profile.personal_info.name}\n"
-        f"   - Education: {profile.education[0].degree if profile.education else 'B.Tech'}\n"
-        f"   - Experience: {profile.application_answers.years_of_experience} years as Junior AI Engineer (Intern)\n"
-        f"   - Key Projects: Video RAG System (Python, FastAPI, Vector DBs), DigiSwasthya Platform (React, Playwright, Supabase), Prescription OCR Study (Vision LLMs).\n"
-        f"   - Core Skills: Python, FastAPI, React, Playwright, RAG, LLMs, SQLite, PostgreSQL.\n"
-        f"   - Notice: Immediate (0 days)\n"
-        "3. TONE: First-person ('I have...', 'My experience includes...'), factual, positive, and concise.\n"
-        "4. If it is a Yes/No question, start clearly with 'Yes' or 'No'.\n"
-        "5. Output plain text answer only. Do NOT include markdown backticks or commentary."
+        "You are representing candidate Rayavaram Jayasurya in a job application screening form.\n"
+        "Your goal is to answer the employer's screening question truthfully, accurately, and strictly based on the candidate profile.\n\n"
+        "CRITICAL CANDIDATE PROFILE FACTS (ZERO HALLUCINATION):\n"
+        f"   - Full Name: {profile.personal_info.name}\n"
+        f"   - Degree & Education: {profile.education[0].degree if profile.education else 'B.Tech in Computer Science and Engineering (Data Science)'}\n"
+        f"   - Graduation Year: {profile.education[0].graduation_year if profile.education else '2026'}\n"
+        f"   - Professional Experience: {profile.application_answers.years_of_experience} years as Junior AI Engineer / Python Developer\n"
+        f"   - Notice Period: {profile.preferences.notice_period_days} days (Immediate Joiner)\n"
+        f"   - Current Location: {profile.personal_info.location}\n"
+        f"   - Willing to Relocate: {'Yes' if profile.application_answers.willing_to_relocate else 'No'} (Open to Hyderabad, Bengaluru, Remote, Onsite)\n"
+        f"   - Expected Salary / CTC: {profile.preferences.min_expected_salary or 'Negotiable'}\n"
+        f"   - Work Authorization: Legally authorized to work in India, does NOT require visa sponsorship\n"
+        f"   - Core Technical Skills: Python, FastAPI, React, Playwright, LangGraph, LLMs, RAG, SQLite, PostgreSQL, PySpark, Git, Docker\n\n"
+        "STRICT OUTPUT INSTRUCTIONS:\n"
+        "1. If field_type is 'number' or the question asks for a number (years of experience, notice period in days, score/rating):\n"
+        "   Output ONLY the integer or decimal number (e.g., '1', '0', '0.8'). No text, no units.\n"
+        "2. If options are provided (for dropdown select or radio buttons):\n"
+        "   Choose and return ONLY the EXACT option text from the provided options that best represents the candidate.\n"
+        "3. If it is a Yes/No question:\n"
+        "   Respond with ONLY 'Yes' or 'No'.\n"
+        "4. If it is an open-ended question or textarea:\n"
+        "   Provide a concise, direct, professional answer in first person (1-2 sentences max).\n"
+        "5. Output PLAIN TEXT ONLY. Never include markdown, quotes, or preambles."
     )
 
-    prompt = (
-        f"Job Title: {job_title or 'Software / AI Engineer'}\n"
-        f"Company: {company_name or 'Hiring Company'}\n"
-        f"Screening Question: {question}\n\n"
-        f"Please provide the direct candidate answer:"
-    )
+    prompt_parts = [
+        f"Job Title: {job_title or 'Software / AI Engineer'}",
+        f"Company: {company_name or 'Hiring Company'}",
+        f"Screening Question: {question}",
+        f"Field Type: {field_type}",
+    ]
+    if options:
+        prompt_parts.append(f"Available Options: {json.dumps(options)}")
+    prompt_parts.append("Please provide the candidate answer:")
+    prompt = "\n".join(prompt_parts)
 
     try:
-        response = client.models.generate_content(
+        response = claude_client.messages.create(
             model=DEFAULT_MODEL,
-            contents=prompt,
-            config=genai_types.GenerateContentConfig(
-                system_instruction=system_instruction,
-                temperature=0.2,
-            )
+            max_tokens=250,
+            system=system_instruction,
+            messages=[{"role": "user", "content": prompt}],
         )
-        ans = (response.text or "").strip()
+        if response.stop_reason == "refusal":
+            raise RuntimeError("AI model declined to answer this screening question.")
+        ans = response_text(response).strip().strip('"\'')
+
+        # Clean numeric fields if needed
+        if field_type == "number":
+            num_match = re.search(r"\b\d+(\.\d+)?\b", ans)
+            if num_match:
+                ans = num_match.group(0)
+            else:
+                ans = str(profile.application_answers.years_of_experience)
+
+        # Match exact option if provided
+        if options and ans not in options:
+            for opt in options:
+                if ans.lower() == opt.lower() or ans.lower() in opt.lower() or opt.lower() in ans.lower():
+                    ans = opt
+                    break
 
         # Save to SQLite memory bank for future runs
         with SessionLocal() as db:
@@ -261,13 +266,13 @@ def generate_ai_screening_answer(
 
         return {
             "answer": ans,
-            "source": "gemini_ai_generated",
-            "confidence": 0.85,
+            "source": "claude_ai_generated",
+            "confidence": 0.95,
             "category": "AI_Generated"
         }
     except Exception as e:
         logger.error(f"Error generating AI answer: {e}")
-        fallback_ans = "Yes, I have relevant hands-on engineering experience from my verified projects."
+        fallback_ans = "1" if field_type == "number" else (options[0] if options else "Yes")
         return {
             "answer": fallback_ans,
             "source": "fallback_error",
@@ -281,39 +286,65 @@ def get_or_generate_answer(
     job_title: str = "",
     company_name: str = "",
     job_description: str = "",
-    allow_ai_generation: bool = True
-) -> Dict[str, Any]:
+    field_type: str = "text",
+    options: Optional[List[str]] = None,
+    allow_ai_generation: bool = True,  # Claude Haiku Brain always enabled
+    verified_only: bool = False,
+) -> Optional[Dict[str, Any]]:
     """
     Tiered resolver for screening questions:
     Tier 1: SQLite DB Memory Bank (Cached answers)
     Tier 2: Profile Rule Patterns (Instant deterministic lookup)
-    Tier 3: Gemini AI Generation (Unseen open-ended questions)
+    Tier 3: Claude AI Generation (Unseen open-ended & dynamic questions)
     """
+    if verified_only:
+        mem = get_answer_from_memory(question)
+        if mem and mem.get("category") != "AI_Generated":
+            return mem
+        rule = get_answer_from_rules(question)
+        if rule:
+            with SessionLocal() as db:
+                crud.save_qa_answer(db, question=question, answer=str(rule["answer"]), category=rule["category"])
+            return rule
+        return None
+
     # 1. Tier 1: SQLite Memory Bank
     mem = get_answer_from_memory(question)
     if mem:
-        return mem
-        
+        # If numeric field, ensure stored answer isn't an invalid string like "Yes"
+        if field_type == "number" and not re.search(r"\d", str(mem.get("answer", ""))):
+            logger.info(f"Discarding invalid non-numeric cached answer '{mem.get('answer')}' for numeric field '{question}'")
+        else:
+            return mem
+
     # 2. Tier 2: Profile Rules
     rule = get_answer_from_rules(question)
     if rule:
+        rule_ans = str(rule["answer"])
+        if field_type == "number":
+            num_match = re.search(r"\b\d+(\.\d+)?\b", rule_ans)
+            if num_match:
+                rule_ans = num_match.group(0)
+            rule["answer"] = rule_ans
         # Cache rule answer to SQLite DB for instant exact matches later
         with SessionLocal() as db:
-            crud.save_qa_answer(db, question=question, answer=str(rule["answer"]), category=rule["category"])
+            crud.save_qa_answer(db, question=question, answer=rule_ans, category=rule["category"])
         return rule
-        
-    # 3. Tier 3: Gemini AI Generator
+
+    # 3. Tier 3: Claude AI Generator
     if allow_ai_generation:
         return generate_ai_screening_answer(
             question=question,
             job_title=job_title,
             company_name=company_name,
-            job_description=job_description
+            job_description=job_description,
+            field_type=field_type,
+            options=options,
         )
-        
+
     return {
-        "answer": "Yes",
-        "source": "default_yes",
+        "answer": "1" if field_type == "number" else (options[0] if options else "Yes"),
+        "source": "default_fallback",
         "confidence": 0.5,
         "category": "General"
     }

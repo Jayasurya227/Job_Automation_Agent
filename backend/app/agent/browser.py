@@ -44,6 +44,36 @@ DEFAULT_USER_AGENT = (
 STEALTH_INIT_SCRIPT = build_stealth_js()
 
 
+def sanitize_session_preferences(session_dir: Path) -> None:
+    """
+    Ensures Chrome does not restore off-screen or negative window positions
+    saved by previous headless scraping runs.
+    """
+    pref_file = session_dir / "Default" / "Preferences"
+    if not pref_file.exists():
+        return
+    try:
+        import json
+        data = json.loads(pref_file.read_text(encoding="utf-8"))
+        browser_sec = data.get("browser", {})
+        wp = browser_sec.get("window_placement")
+        if wp and isinstance(wp, dict):
+            left = wp.get("left", 0)
+            top = wp.get("top", 0)
+            bottom = wp.get("bottom", 700)
+            work_area_bottom = wp.get("work_area_bottom", 700)
+            if left < 0 or top < 0 or (work_area_bottom > 0 and bottom > work_area_bottom):
+                logger.info(f"Resetting window_placement (left={left}, top={top}, bottom={bottom}) to fit visible display.")
+                wp["left"] = 40
+                wp["top"] = 40
+                wp["right"] = 1180
+                wp["bottom"] = min(640, work_area_bottom - 20) if work_area_bottom > 100 else 640
+                wp["maximized"] = False
+                pref_file.write_text(json.dumps(data), encoding="utf-8")
+    except Exception as e:
+        logger.debug(f"Notice during Preferences sanitization: {e}")
+
+
 class BrowserSessionManager:
     """
     Manages persistent Chromium browser contexts with stealth configurations
@@ -81,16 +111,39 @@ class BrowserSessionManager:
         is_headless = self.headless if headless is None else headless
 
         async with async_playwright() as playwright:
-            context = await playwright.chromium.launch_persistent_context(
-                user_data_dir=str(self.session_dir),
-                headless=is_headless,
-                viewport=cast(Any, self.viewport),
-                user_agent=self.user_agent,
-                args=self.get_launch_args(),
-                locale="en-US",
-                timezone_id="Asia/Kolkata",
-                ignore_https_errors=True,
-            )
+            context = None
+            # Prioritize genuine Google Chrome / Edge to bypass Akamai EdgeSuite bot detection
+            for ch in ["chrome", "msedge", None]:
+                try:
+                    launch_kwargs = {
+                        "user_data_dir": str(self.session_dir),
+                        "headless": is_headless,
+                        "viewport": cast(Any, self.viewport),
+                        "user_agent": self.user_agent,
+                        "args": self.get_launch_args(),
+                        "locale": "en-US",
+                        "timezone_id": "Asia/Kolkata",
+                        "ignore_https_errors": True,
+                    }
+                    if ch:
+                        launch_kwargs["channel"] = ch
+                    context = await playwright.chromium.launch_persistent_context(**launch_kwargs)
+                    break
+                except Exception as e:
+                    logger.debug(f"Could not launch channel={ch}: {e}")
+                    context = None
+
+            if context is None:
+                context = await playwright.chromium.launch_persistent_context(
+                    user_data_dir=str(self.session_dir),
+                    headless=is_headless,
+                    viewport=cast(Any, self.viewport),
+                    user_agent=self.user_agent,
+                    args=self.get_launch_args(),
+                    locale="en-US",
+                    timezone_id="Asia/Kolkata",
+                    ignore_https_errors=True,
+                )
 
             # Inject anti-detection stealth script into all existing & future pages
             await context.add_init_script(build_stealth_js())

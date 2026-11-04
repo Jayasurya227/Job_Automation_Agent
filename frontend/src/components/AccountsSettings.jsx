@@ -1,102 +1,107 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  Globe, 
   Shield, 
-  Eye, 
-  EyeOff, 
-  Save, 
   Loader2,
   ExternalLink,
   CheckCircle2,
   AlertCircle,
   RefreshCw,
-  Key
 } from 'lucide-react';
 import { api } from '../api';
 
 export default function AccountsSettings({ notify }) {
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [showPassword, setShowPassword] = useState(false);
-  const [launchingSession, setLaunchingSession] = useState(false);
-  const [refreshingSession, setRefreshingSession] = useState(false);
 
-  const [sessionInfo, setSessionInfo] = useState({
+  // Naukri session state
+  const [launchingNaukriSession, setLaunchingNaukriSession] = useState(false);
+  const [refreshingNaukriSession, setRefreshingNaukriSession] = useState(false);
+  const [naukriSessionInfo, setNaukriSessionInfo] = useState({
     connected: false,
     status: 'unconfigured',
     message: 'Checking persistent session...',
   });
 
-  const [portals, setPortals] = useState({
-    naukri: { username: '', password: '', status: 'unconfigured', has_password: false }
+  // Indeed session state
+  const [launchingIndeedSession, setLaunchingIndeedSession] = useState(false);
+  const [refreshingIndeedSession, setRefreshingIndeedSession] = useState(false);
+  const [indeedSessionInfo, setIndeedSessionInfo] = useState({
+    connected: false,
+    status: 'unconfigured',
+    message: 'Checking persistent session...',
   });
 
-  const loadSettingsAndSession = async () => {
+  const loadSessions = async () => {
     try {
       setLoading(true);
-      const [settingsData, sessionData] = await Promise.allSettled([
-        api.getSettings(),
-        api.getNaukriSessionStatus()
+      const [naukriData, indeedData] = await Promise.all([
+        api.getNaukriSessionStatus().catch(() => null),
+        api.getIndeedSessionStatus().catch(() => null),
       ]);
-
-      if (settingsData.status === 'fulfilled' && settingsData.value?.portals) {
-        setPortals({
-          naukri: {
-            username: settingsData.value.portals.naukri?.username || '',
-            password: settingsData.value.portals.naukri?.password || '',
-            status: settingsData.value.portals.naukri?.status || 'unconfigured',
-            has_password: Boolean(settingsData.value.portals.naukri?.has_password)
-          }
-        });
-      }
-
-      if (sessionData.status === 'fulfilled' && sessionData.value) {
-        setSessionInfo(sessionData.value);
-      }
+      if (naukriData) setNaukriSessionInfo(naukriData);
+      if (indeedData) setIndeedSessionInfo(indeedData);
     } catch (err) {
-      if (notify) notify('Failed to load account settings: ' + err.message, 'error');
+      if (notify) notify('Failed to load portal session status: ' + err.message, 'error');
     } finally {
       setLoading(false);
     }
   };
 
-  const checkSessionStatus = async (showToast = false) => {
+  const checkNaukriStatus = async (showToast = false) => {
     try {
-      setRefreshingSession(true);
+      setRefreshingNaukriSession(true);
       const res = await api.getNaukriSessionStatus();
-      setSessionInfo(res);
+      setNaukriSessionInfo(res);
       if (showToast && notify) {
         if (res.connected) {
-          notify('Naukri session is active and ready!', 'success');
+          notify('Naukri session is active and verified!', 'success');
         } else {
-          notify('No active persistent session detected yet.', 'warning');
+          notify('No active Naukri persistent session detected yet.', 'warning');
         }
       }
     } catch (err) {
-      if (showToast && notify) notify('Error checking session: ' + err.message, 'error');
+      if (showToast && notify) notify('Error checking Naukri session: ' + err.message, 'error');
     } finally {
-      setRefreshingSession(false);
+      setRefreshingNaukriSession(false);
     }
   };
 
-  const handleLaunchSession = async () => {
+  const checkIndeedStatus = async (showToast = false) => {
     try {
-      setLaunchingSession(true);
+      setRefreshingIndeedSession(true);
+      const res = await api.getIndeedSessionStatus();
+      setIndeedSessionInfo(res);
+      if (showToast && notify) {
+        if (res.connected) {
+          notify('Indeed session is active and verified!', 'success');
+        } else {
+          notify('No active Indeed persistent session detected yet.', 'warning');
+        }
+      }
+    } catch (err) {
+      if (showToast && notify) notify('Error checking Indeed session: ' + err.message, 'error');
+    } finally {
+      setRefreshingIndeedSession(false);
+    }
+  };
+
+
+  const handleLaunchNaukriSession = async () => {
+    try {
+      setLaunchingNaukriSession(true);
       const res = await api.launchNaukriSession();
       if (notify) {
         notify(res.message || 'Launched Chrome window! Log into Naukri and press Enter in the terminal.', 'info');
       }
       
-      // Poll session status every 4 seconds for 40 seconds
       let attempts = 0;
       const interval = setInterval(async () => {
         attempts += 1;
         try {
           const statusRes = await api.getNaukriSessionStatus();
-          setSessionInfo(statusRes);
+          setNaukriSessionInfo(statusRes);
           if (statusRes.connected || attempts >= 10) {
             clearInterval(interval);
-            setLaunchingSession(false);
+            setLaunchingNaukriSession(false);
             if (statusRes.connected && notify) {
               notify('🎉 Naukri session successfully captured and verified!', 'success');
             }
@@ -104,57 +109,62 @@ export default function AccountsSettings({ notify }) {
         } catch {
           if (attempts >= 10) {
             clearInterval(interval);
-            setLaunchingSession(false);
+            setLaunchingNaukriSession(false);
           }
         }
       }, 4000);
 
     } catch (err) {
-      setLaunchingSession(false);
-      if (notify) notify('Failed to launch login session: ' + err.message, 'error');
+      setLaunchingNaukriSession(false);
+      if (notify) notify('Failed to launch Naukri session: ' + err.message, 'error');
     }
   };
+
+  const handleLaunchIndeedSession = async () => {
+    try {
+      setLaunchingIndeedSession(true);
+      const res = await api.launchIndeedSession();
+      if (notify) {
+        notify(res.message || 'Launched Chrome window! Log into Indeed and press Enter in the terminal.', 'info');
+      }
+      
+      let attempts = 0;
+      const interval = setInterval(async () => {
+        attempts += 1;
+        try {
+          const statusRes = await api.getIndeedSessionStatus();
+          setIndeedSessionInfo(statusRes);
+          if (statusRes.connected || attempts >= 10) {
+            clearInterval(interval);
+            setLaunchingIndeedSession(false);
+            if (statusRes.connected && notify) {
+              notify('🎉 Indeed session successfully captured and verified!', 'success');
+            }
+          }
+        } catch {
+          if (attempts >= 10) {
+            clearInterval(interval);
+            setLaunchingIndeedSession(false);
+          }
+        }
+      }, 4000);
+
+    } catch (err) {
+      setLaunchingIndeedSession(false);
+      if (notify) notify('Failed to launch Indeed session: ' + err.message, 'error');
+    }
+  };
+
 
   useEffect(() => {
-    loadSettingsAndSession();
+    loadSessions();
   }, []);
-
-  const handleSave = async (e) => {
-    if (e) e.preventDefault();
-    try {
-      setSaving(true);
-      const payload = {
-        portals: {
-          naukri: { username: portals.naukri.username, password: portals.naukri.password }
-        }
-      };
-
-      const res = await api.updateSettings(payload);
-      if (notify) notify('Portal credentials saved securely!', 'success');
-      
-      if (res.settings && res.settings.portals) {
-        setPortals(prev => ({
-          ...prev,
-          naukri: {
-            ...prev.naukri,
-            password: res.settings.portals.naukri?.password || '',
-            status: res.settings.portals.naukri?.status || 'unconfigured',
-            has_password: Boolean(res.settings.portals.naukri?.has_password)
-          }
-        }));
-      }
-    } catch (err) {
-      if (notify) notify('Error saving credentials: ' + err.message, 'error');
-    } finally {
-      setSaving(false);
-    }
-  };
 
   if (loading) {
     return (
       <div className="accounts-settings-container" style={{ textAlign: 'center', padding: '60px 20px', color: 'var(--text-muted)' }}>
         <Loader2 size={24} className="spin" style={{ margin: '0 auto 12px' }} />
-        <div>Loading credentials &amp; session status...</div>
+        <div>Loading persistent portal sessions...</div>
       </div>
     );
   }
@@ -173,7 +183,7 @@ export default function AccountsSettings({ notify }) {
           </span>
         </div>
         <p className="portal-page-subtitle">
-          Connect real Naukri accounts safely via persistent browser session cookies to bypass OTP and anti-bot blocks.
+          Connect real Naukri, Indeed, and Instahyre accounts safely via persistent browser session cookies to bypass OTP and anti-bot blocks without storing passwords.
         </p>
       </div>
 
@@ -181,12 +191,12 @@ export default function AccountsSettings({ notify }) {
       <div className="portal-security-banner">
         <Shield size={20} color="var(--primary-light)" style={{ flexShrink: 0, marginTop: '2px' }} />
         <div>
-          <strong style={{ color: 'var(--text-main)' }}>Zero Risk Persistent Session:</strong> We never submit your raw credentials via automated headless bots. Real browser profiles are stored strictly on your local disk at <code>backend/data/browser_session/</code>.
+          <strong style={{ color: 'var(--text-main)' }}>Zero-Password Persistent Sessions:</strong> No account passwords are saved or stored. Real authenticated browser profiles and cookies are kept strictly in isolated local vaults on your disk (<code>browser_session/</code>, <code>indeed_session/</code>, and <code>instahyre_session/</code>).
         </div>
       </div>
 
-      {/* CARD 1: RECOMMENDED - ONE-CLICK SAFE BROWSER SESSION LOGIN */}
-      <div className="glass-panel portal-card" style={{ border: '1px solid rgba(99, 102, 241, 0.35)', background: 'linear-gradient(180deg, rgba(99, 102, 241, 0.04) 0%, rgba(15, 23, 42, 0.02) 100%)' }}>
+      {/* CARD 1: NAUKRI 1-CLICK SAFE LOGIN SESSION */}
+      <div className="glass-panel portal-card" style={{ border: '1.8px solid #ffffff', boxShadow: 'var(--shadow-md)' }}>
         <div className="portal-card-header">
           <div className="portal-card-title-group">
             <span style={{ fontSize: '1.4rem', lineHeight: 1 }}>🇮🇳</span>
@@ -206,32 +216,32 @@ export default function AccountsSettings({ notify }) {
           </div>
 
           <div className="portal-status-actions">
-            <span className={`badge ${sessionInfo.connected ? 'badge-emerald' : 'badge-amber'}`} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
-              {sessionInfo.connected ? <CheckCircle2 size={12} /> : <AlertCircle size={12} />}
-              {sessionInfo.connected ? 'Session Connected' : 'Needs Login'}
+            <span className={`badge ${naukriSessionInfo.connected ? 'badge-emerald' : 'badge-amber'}`} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+              {naukriSessionInfo.connected ? <CheckCircle2 size={12} /> : <AlertCircle size={12} />}
+              {naukriSessionInfo.connected ? 'Session Connected' : 'Needs Login'}
             </span>
             <button
               type="button"
-              onClick={() => checkSessionStatus(true)}
-              disabled={refreshingSession}
+              onClick={() => checkNaukriStatus(true)}
+              disabled={refreshingNaukriSession}
               className="btn btn-secondary"
-              title="Refresh session status"
+              title="Refresh Naukri session status"
               style={{ padding: '6px 10px', fontSize: '0.78rem' }}
             >
-              <RefreshCw size={13} className={refreshingSession ? 'spin' : ''} />
+              <RefreshCw size={13} className={refreshingNaukriSession ? 'spin' : ''} />
             </button>
           </div>
         </div>
 
         <div className="portal-session-banner" style={{
-          background: sessionInfo.connected ? 'rgba(16, 185, 129, 0.08)' : 'rgba(245, 158, 11, 0.08)',
-          border: `1px solid ${sessionInfo.connected ? 'rgba(16, 185, 129, 0.25)' : 'rgba(245, 158, 11, 0.25)'}`,
+          background: naukriSessionInfo.connected ? 'rgba(16, 185, 129, 0.08)' : 'rgba(245, 158, 11, 0.08)',
+          border: `1px solid ${naukriSessionInfo.connected ? 'rgba(16, 185, 129, 0.25)' : 'rgba(245, 158, 11, 0.25)'}`,
         }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem', fontWeight: 600, color: sessionInfo.connected ? 'var(--emerald)' : 'var(--amber)' }}>
-            {sessionInfo.connected ? '🟢 Naukri Persistent Browser Session is Active' : '🟡 Session Not Initialized'}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem', fontWeight: 600, color: naukriSessionInfo.connected ? 'var(--emerald)' : 'var(--amber)' }}>
+            {naukriSessionInfo.connected ? '🟢 Naukri Persistent Browser Session is Active' : '🟡 Naukri Session Not Initialized'}
           </div>
           <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-            {sessionInfo.connected
+            {naukriSessionInfo.connected
               ? 'Your authenticated session cookies are stored locally. The agent can auto-apply to Naukri 1-Click jobs autonomously with zero password prompts.'
               : 'Naukri requires a one-time human authentication (to solve any SMS/WhatsApp OTP). Click the button below to launch Chrome on your PC, log into your account, and save your session permanently.'}
           </p>
@@ -240,12 +250,12 @@ export default function AccountsSettings({ notify }) {
         <div className="portal-actions-footer">
           <button
             type="button"
-            onClick={handleLaunchSession}
-            disabled={launchingSession}
+            onClick={handleLaunchNaukriSession}
+            disabled={launchingNaukriSession}
             className="portal-launch-btn"
           >
-            {launchingSession ? <Loader2 size={16} className="spin" /> : <ExternalLink size={16} />}
-            <span>{launchingSession ? 'Waiting for Login & Confirmation...' : 'Launch One-Time Chrome Login (OTP / CAPTCHA)'}</span>
+            {launchingNaukriSession ? <Loader2 size={16} className="spin" /> : <ExternalLink size={16} />}
+            <span>{launchingNaukriSession ? 'Waiting for Login & Confirmation...' : 'Launch One-Time Chrome Login (Naukri)'}</span>
           </button>
 
           <span className="portal-path-indicator">
@@ -254,81 +264,75 @@ export default function AccountsSettings({ notify }) {
         </div>
       </div>
 
-      {/* CARD 2: OPTIONAL BACKUP CREDENTIALS */}
-      <form onSubmit={handleSave} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-        <div className="glass-panel portal-card">
-          <div className="portal-card-header">
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <Key size={18} color="var(--primary-light)" />
-              <h2 className="portal-card-h2">
-                Backup Account Credentials (Optional)
-              </h2>
-            </div>
-            <span style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>
-              Used for pre-filling login forms
-            </span>
-          </div>
-
-          <div className="portal-credentials-box">
-            <div>
-              <label style={{ display: 'block', fontSize: '0.76rem', color: 'var(--text-muted)', marginBottom: '5px' }}>
-                Naukri Registered Email / Username
-              </label>
-              <input
-                type="text"
-                className="input-field"
-                placeholder="e.g. your_naukri_id@email.com"
-                value={portals.naukri.username}
-                onChange={(e) => setPortals({
-                  ...portals,
-                  naukri: { ...portals.naukri, username: e.target.value }
-                })}
-                style={{ width: '100%', fontSize: '0.85rem' }}
-              />
-            </div>
-
-            <div>
-              <label style={{ display: 'block', fontSize: '0.76rem', color: 'var(--text-muted)', marginBottom: '5px' }}>
-                Naukri Password
-              </label>
-              <div style={{ position: 'relative' }}>
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  className="input-field"
-                  placeholder="Enter account password"
-                  value={portals.naukri.password}
-                  onChange={(e) => setPortals({
-                    ...portals,
-                    naukri: { ...portals.naukri, password: e.target.value }
-                  })}
-                  style={{ width: '100%', fontSize: '0.85rem', paddingRight: '36px' }}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: '4px' }}
-                >
-                  {showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
-                </button>
+      {/* CARD 2: INDEED 1-CLICK SAFE LOGIN SESSION */}
+      <div className="glass-panel portal-card" style={{ border: '1.8px solid #ffffff', boxShadow: 'var(--shadow-md)' }}>
+        <div className="portal-card-header">
+          <div className="portal-card-title-group">
+            <span style={{ fontSize: '1.4rem', lineHeight: 1 }}>🌐</span>
+            <div className="portal-card-title-text">
+              <div className="portal-card-heading-badge">
+                <h2 className="portal-card-h2">
+                  Indeed.com Safe 1-Click Login Session
+                </h2>
+                <span className="badge badge-cyan" style={{ fontSize: '0.68rem', padding: '2px 8px' }}>
+                  Easily Apply
+                </span>
               </div>
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                Persistent Chrome profile for Indeed "Easily Apply" authentication &amp; bot protection
+              </span>
             </div>
+          </div>
+
+          <div className="portal-status-actions">
+            <span className={`badge ${indeedSessionInfo.connected ? 'badge-emerald' : 'badge-amber'}`} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+              {indeedSessionInfo.connected ? <CheckCircle2 size={12} /> : <AlertCircle size={12} />}
+              {indeedSessionInfo.connected ? 'Session Connected' : 'Needs Login'}
+            </span>
+            <button
+              type="button"
+              onClick={() => checkIndeedStatus(true)}
+              disabled={refreshingIndeedSession}
+              className="btn btn-secondary"
+              title="Refresh Indeed session status"
+              style={{ padding: '6px 10px', fontSize: '0.78rem' }}
+            >
+              <RefreshCw size={13} className={refreshingIndeedSession ? 'spin' : ''} />
+            </button>
           </div>
         </div>
 
-        {/* Global Save Button */}
-        <div className="portal-save-row">
-          <button
-            type="submit"
-            disabled={saving}
-            className="btn btn-secondary"
-            style={{ fontSize: '0.88rem', padding: '10px 24px', display: 'inline-flex', alignItems: 'center', gap: '8px' }}
-          >
-            {saving ? <Loader2 size={16} className="spin" /> : <Save size={16} />}
-            <span>{saving ? 'Saving...' : 'Save Backup Credentials'}</span>
-          </button>
+        <div className="portal-session-banner" style={{
+          background: indeedSessionInfo.connected ? 'rgba(16, 185, 129, 0.08)' : 'rgba(245, 158, 11, 0.08)',
+          border: `1px solid ${indeedSessionInfo.connected ? 'rgba(16, 185, 129, 0.25)' : 'rgba(245, 158, 11, 0.25)'}`,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem', fontWeight: 600, color: indeedSessionInfo.connected ? 'var(--emerald)' : 'var(--amber)' }}>
+            {indeedSessionInfo.connected ? '🟢 Indeed Persistent Browser Session is Active' : '🟡 Indeed Session Not Initialized'}
+          </div>
+          <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+            {indeedSessionInfo.connected
+              ? 'Your authenticated session cookies are stored locally in an isolated directory. The agent can auto-apply to Indeed "Easily Apply" jobs autonomously with zero password prompts.'
+              : 'Indeed requires a one-time human authentication (email OTP or Google sign-in). Click the button below to launch Chrome on your PC, log into your account once, and save your cookies permanently.'}
+          </p>
         </div>
 
-      </form>
+        <div className="portal-actions-footer">
+          <button
+            type="button"
+            onClick={handleLaunchIndeedSession}
+            disabled={launchingIndeedSession}
+            className="portal-launch-btn"
+          >
+            {launchingIndeedSession ? <Loader2 size={16} className="spin" /> : <ExternalLink size={16} />}
+            <span>{launchingIndeedSession ? 'Waiting for Login & Confirmation...' : 'Launch One-Time Chrome Login (Indeed)'}</span>
+          </button>
+
+          <span className="portal-path-indicator">
+            Path: <code>backend/data/indeed_session/</code>
+          </span>
+        </div>
+      </div>
+
     </div>
   );
 }

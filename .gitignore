@@ -58,6 +58,9 @@ backend/data/*.db
 data/*.db
 backend/data/account_settings.json
 backend/data/uploaded_resume.pdf
+# Personal candidate profile (contact details, salary answers)
+backend/profile.json
+profile.json
 backend/data/browser_session/
 **/browser_session/
 
@@ -86,3 +89,12 @@ Thumbs.db
 desktop.ini
 *.swp
 *.swo
+backend/data/indeed_session/
+**/indeed_session/
+backend/data/naukri_session/
+**/naukri_session/
+backend/data/test_*/
+**/test_diag/
+**/test_edge_verify/
+**/test_profile/
+**/test_sync/

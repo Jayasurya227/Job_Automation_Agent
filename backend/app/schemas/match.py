@@ -26,3 +26,11 @@ class JobMatchResult(BaseModel):
     summary_reasoning: str = Field(
         description="Concise 2-sentence rationale explaining the score and recommendation"
     )
+    apply_type: Literal["1-Click", "External"] = Field(
+        default="1-Click",
+        description="Whether this job can be applied natively with 1-Click / Easy Apply ('1-Click') OR requires applying on an external company careers portal / ATS like Workday, Greenhouse, Taleo, company website, etc. ('External')"
+    )
+    apply_type_reasoning: str = Field(
+        default="",
+        description="Concise rationale for the apply_type classification (e.g. 'Redirects to corporate ATS', 'Requires external site submission', or 'Native direct application')"
+    )
