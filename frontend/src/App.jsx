@@ -704,7 +704,12 @@ export default function App() {
                       border: settingsTab === 'history' ? '1px solid var(--primary)' : '1px solid var(--border-card)',
                     }}
                   >
-                    <History size={13} />
+                    <History 
+                      size={18} 
+                      strokeWidth={2.4}
+                      className="settings-history-mobile-icon"
+                      style={{ color: '#ea580c', stroke: '#ea580c' }}
+                    />
                     <span>Application History</span>
                   </button>
                 </div>

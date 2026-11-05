@@ -1653,15 +1653,15 @@ body {
   .settings-title-row {
     display: flex !important;
     align-items: center !important;
-    justify-content: space-between !important;
+    justify-content: flex-start !important;
     width: 100% !important;
-    gap: 10px !important;
+    gap: 12px !important;
   }
 
   .settings-history-mobile-btn {
     display: inline-flex !important;
     align-items: center !important;
-    gap: 6px !important;
+    gap: 7px !important;
     padding: 6px 12px !important;
     border-radius: 20px !important;
     font-size: 0.74rem !important;
@@ -1670,6 +1670,16 @@ body {
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05) !important;
     flex-shrink: 0 !important;
     transition: all 0.2s ease !important;
+  }
+
+  .settings-history-mobile-icon {
+    color: #ea580c !important;
+    stroke: #ea580c !important;
+    width: 18px !important;
+    height: 18px !important;
+    min-width: 18px !important;
+    min-height: 18px !important;
+    flex-shrink: 0 !important;
   }
 
   /* Hide the 3rd tab from lower group on mobile */
