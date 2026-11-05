@@ -54,7 +54,12 @@ from app.schemas.api import (
     SaveQARequest,
     QAItemResponse,
     UpdateAccountSettingsRequest,
+    NaukriMobileConnectRequest,
+    NaukriVerifyOtpRequest,
+    NaukriCancelSessionRequest,
+    NaukriConnectResponse,
 )
+from app.agent.headless_auth import headless_auth_manager
 from app.agent.mailer import (
     load_account_settings,
     save_account_settings,
@@ -937,6 +942,50 @@ async def launch_naukri_session():
     except Exception as e:
         logger.error(f"Failed to launch session window: {e}")
         return {"status": "error", "message": str(e)}
+
+
+@app.post("/api/portals/naukri/connect-mobile", response_model=NaukriConnectResponse, tags=["Portals"])
+async def connect_naukri_mobile(req: NaukriMobileConnectRequest):
+    """
+    Dual-Mode Mobile Portal Connection.
+    Initiates a silent background login session for Naukri in a worker thread.
+    Returns status:
+      - 'OTP_REQUIRED': with session_id to prompt mobile user for SMS OTP.
+      - 'SUCCESS': if user was already logged in or completed directly.
+      - 'ERROR': if credentials or connection failed.
+    """
+    logger.info(f"Mobile Naukri connection requested for identifier: {req.identifier[:4]}***")
+    result = await asyncio.to_thread(
+        headless_auth_manager.start_naukri_login,
+        identifier=req.identifier,
+        password=req.password,
+        use_otp_mode=bool(req.use_otp),
+    )
+    return NaukriConnectResponse(**result)
+
+
+@app.post("/api/portals/naukri/verify-otp", response_model=NaukriConnectResponse, tags=["Portals"])
+async def verify_naukri_mobile_otp(req: NaukriVerifyOtpRequest):
+    """
+    Dual-Mode Mobile Portal Connection.
+    Submits user's 6-digit SMS OTP to the active headless browser session.
+    Saves authenticated cookies to permanent storage and completes connection.
+    """
+    logger.info(f"Mobile Naukri OTP verification received for session: {req.session_id}")
+    result = await asyncio.to_thread(
+        headless_auth_manager.verify_naukri_otp,
+        session_id=req.session_id,
+        otp=req.otp,
+    )
+    return NaukriConnectResponse(**result)
+
+
+@app.post("/api/portals/naukri/cancel-mobile", tags=["Portals"])
+async def cancel_naukri_mobile_session(req: NaukriCancelSessionRequest):
+    """Cancels a pending headless login session and frees browser resources."""
+    headless_auth_manager._close_session(req.session_id)
+    return {"status": "cancelled", "message": "Login session cancelled successfully."}
+
 
 
 @app.get("/api/portals/indeed/session-status", tags=["Portals"])

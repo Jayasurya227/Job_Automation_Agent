@@ -166,6 +166,18 @@ export const api = {
   // Portal Persistent Session (Naukri Safe OTP Login)
   getNaukriSessionStatus: () => request('/api/portals/naukri/session-status'),
   launchNaukriSession: () => request('/api/portals/naukri/launch-session', { method: 'POST' }),
+  connectNaukriMobile: (data) => request('/api/portals/naukri/connect-mobile', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  }),
+  verifyNaukriMobileOtp: (data) => request('/api/portals/naukri/verify-otp', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  }),
+  cancelNaukriMobileSession: (sessionId) => request('/api/portals/naukri/cancel-mobile', {
+    method: 'POST',
+    body: JSON.stringify({ session_id: sessionId }),
+  }),
 
   // Portal Persistent Session (Indeed Safe Login)
   getIndeedSessionStatus: () => request('/api/portals/indeed/session-status'),

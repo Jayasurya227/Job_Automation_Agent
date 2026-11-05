@@ -250,3 +250,34 @@ class UpdateAccountSettingsRequest(BaseModel):
     smtp: Optional[SMTPSettingsInput] = None
     portals: Optional[dict[str, PortalConfigInput]] = None
 
+
+# =====================================================================
+# Mobile Portal Connection & Headless OTP Verification (Dual-Mode Auth)
+# =====================================================================
+
+class NaukriMobileConnectRequest(BaseModel):
+    """Payload to initiate headless Naukri connection from mobile or web."""
+    identifier: str = Field(..., description="Email address or 10-digit mobile number")
+    password: Optional[str] = Field(default=None, description="Account password (optional if use_otp is True)")
+    use_otp: Optional[bool] = Field(default=False, description="Request OTP login directly without password")
+    user_id: Optional[str] = Field(default=None, description="Optional tenant or user identifier")
+
+class NaukriVerifyOtpRequest(BaseModel):
+    """Payload to submit received SMS OTP to active headless session."""
+    session_id: str = Field(..., description="Active session UUID waiting for OTP")
+    otp: str = Field(..., min_length=4, max_length=8, description="Verification OTP received via SMS")
+    user_id: Optional[str] = Field(default=None, description="Optional tenant or user identifier")
+
+class NaukriCancelSessionRequest(BaseModel):
+    """Payload to cancel an in-progress headless login session."""
+    session_id: str = Field(..., description="Session UUID to cancel")
+
+class NaukriConnectResponse(BaseModel):
+    """Response returned by mobile connection endpoints."""
+    status: str = Field(..., description="'SUCCESS', 'OTP_REQUIRED', or 'ERROR'")
+    message: str = Field(..., description="Human-readable description of current state")
+    session_id: Optional[str] = Field(default=None, description="Active session ID if OTP is required")
+    portal: str = Field(default="naukri")
+    cookie_count: Optional[int] = Field(default=None)
+
+
