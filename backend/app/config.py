@@ -34,6 +34,10 @@ claude_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 CORS_ORIGINS: List[str] = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
+    "http://localhost:5174",
+    "http://127.0.0.1:5174",
+    "http://10.68.220.85:5173",
+    "http://10.68.220.85:5174",
     "http://localhost:3000",
     "http://127.0.0.1:3000",
 ]

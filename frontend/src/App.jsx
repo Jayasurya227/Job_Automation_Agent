@@ -110,25 +110,40 @@ export default function App() {
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      // 1. Health check
-      await api.checkHealth();
-      setBackendStatus('online');
+      // 1. Health check determines true backend connectivity
+      try {
+        await api.checkHealth();
+        setBackendStatus('online');
+      } catch (healthErr) {
+        console.warn('Backend health check unreachable:', healthErr);
+        setBackendStatus('offline');
+        return;
+      }
 
-      // 2. Fetch jobs, metrics, profile & session status in parallel
-      const [jobsData, metricsData, profileData, sessionData] = await Promise.all([
+      // 2. Fetch jobs, metrics, profile & session status using Promise.allSettled
+      // Prevents a single dropped/delayed fetch on mobile networks from falsely marking the entire backend offline
+      const [jobsRes, metricsRes, profileRes, sessionRes] = await Promise.allSettled([
         api.getJobs(),
         api.getMetrics(),
-        api.getProfile().catch(() => null),
-        api.getNaukriSessionStatus().catch(() => null),
+        api.getProfile(),
+        api.getNaukriSessionStatus(),
       ]);
 
-      setJobs(jobsData);
-      setMetrics(metricsData);
-      if (profileData) setProfile(profileData);
-      if (sessionData) setNaukriSession(sessionData);
+      if (jobsRes.status === 'fulfilled' && jobsRes.value) {
+        setJobs(jobsRes.value);
+      }
+      if (metricsRes.status === 'fulfilled' && metricsRes.value) {
+        setMetrics(metricsRes.value);
+      }
+      if (profileRes.status === 'fulfilled' && profileRes.value) {
+        setProfile(profileRes.value);
+      }
+      if (sessionRes.status === 'fulfilled' && sessionRes.value) {
+        setNaukriSession(sessionRes.value);
+      }
+      setBackendStatus('online');
     } catch (err) {
       console.error('Data sync failed:', err);
-      setBackendStatus('offline');
     } finally {
       setLoading(false);
     }
