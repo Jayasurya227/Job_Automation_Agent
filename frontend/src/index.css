@@ -1653,9 +1653,8 @@ body {
   .settings-title-row {
     display: flex !important;
     align-items: center !important;
-    justify-content: flex-start !important;
+    justify-content: space-between !important;
     width: 100% !important;
-    gap: 22px !important;
   }
 
   .settings-history-mobile-btn {
