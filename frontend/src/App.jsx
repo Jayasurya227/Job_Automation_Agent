@@ -53,7 +53,7 @@ export default function App() {
   const [isDiscovering, setIsDiscovering] = useState(false);
   const [toasts, setToasts] = useState([]);
   const [naukriSession, setNaukriSession] = useState(null);
-  const [isReconnectingSession, setIsReconnectingSession] = useState(false);
+  const [indeedSession, setIndeedSession] = useState(null);
   const [applyingJobId, setApplyingJobId] = useState(null);
 
   // Hourly Auto-Discovery State (9:00 AM – 9:00 PM)
@@ -122,11 +122,12 @@ export default function App() {
 
       // 2. Fetch jobs, metrics, profile & session status using Promise.allSettled
       // Prevents a single dropped/delayed fetch on mobile networks from falsely marking the entire backend offline
-      const [jobsRes, metricsRes, profileRes, sessionRes] = await Promise.allSettled([
+      const [jobsRes, metricsRes, profileRes, naukriRes, indeedRes] = await Promise.allSettled([
         api.getJobs(),
         api.getMetrics(),
         api.getProfile(),
         api.getNaukriSessionStatus(),
+        api.getIndeedSessionStatus(),
       ]);
 
       if (jobsRes.status === 'fulfilled' && jobsRes.value) {
@@ -138,8 +139,11 @@ export default function App() {
       if (profileRes.status === 'fulfilled' && profileRes.value) {
         setProfile(profileRes.value);
       }
-      if (sessionRes.status === 'fulfilled' && sessionRes.value) {
-        setNaukriSession(sessionRes.value);
+      if (naukriRes.status === 'fulfilled' && naukriRes.value) {
+        setNaukriSession(naukriRes.value);
+      }
+      if (indeedRes.status === 'fulfilled' && indeedRes.value) {
+        setIndeedSession(indeedRes.value);
       }
       setBackendStatus('online');
     } catch (err) {
@@ -149,38 +153,24 @@ export default function App() {
     }
   }, []);
 
-  // 1-Click Quick Re-Login Handler for Naukri Session
-  const handleQuickSessionLogin = useCallback(async () => {
-    try {
-      setIsReconnectingSession(true);
-      const res = await api.launchNaukriSession();
-      notify(res.message || 'Launched Chrome window! Log into Naukri and press Enter in the terminal to save your session.', 'info');
-
-      let attempts = 0;
-      const interval = setInterval(async () => {
-        attempts += 1;
-        try {
-          const statusRes = await api.getNaukriSessionStatus();
-          setNaukriSession(statusRes);
-          if (statusRes.connected || attempts >= 12) {
-            clearInterval(interval);
-            setIsReconnectingSession(false);
-            if (statusRes.connected) {
-              notify('🎉 Naukri session successfully captured and verified!', 'success');
-            }
-          }
-        } catch {
-          if (attempts >= 12) {
-            clearInterval(interval);
-            setIsReconnectingSession(false);
-          }
-        }
-      }, 4000);
-    } catch (err) {
-      setIsReconnectingSession(false);
-      notify('Failed to launch login session: ' + err.message, 'error');
+  // Sync sessions whenever returning to Pipeline tab
+  useEffect(() => {
+    if (activeTab === 'pipeline') {
+      Promise.allSettled([
+        api.getNaukriSessionStatus(),
+        api.getIndeedSessionStatus(),
+      ]).then(([naukriRes, indeedRes]) => {
+        if (naukriRes.status === 'fulfilled' && naukriRes.value) setNaukriSession(naukriRes.value);
+        if (indeedRes.status === 'fulfilled' && indeedRes.value) setIndeedSession(indeedRes.value);
+      });
     }
-  }, [notify]);
+  }, [activeTab]);
+
+  // Dynamic Navigation Handler to redirect to Portal Accounts settings
+  const handleRedirectToPortalSettings = useCallback(() => {
+    setActiveTab('settings');
+    setSettingsTab('naukri');
+  }, []);
 
   // 1-Click Instant Autonomous Discovery (Bypasses popup modal, uses saved profile directly)
   const handleInstantDiscover = useCallback(async (isAutoTrigger = false) => {
@@ -481,43 +471,53 @@ export default function App() {
         {/* TAB 1: PIPELINE BOARD */}
         {activeTab === 'pipeline' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-            {/* Live Naukri Session Warning Banner if Expired or Disconnected */}
-            {naukriSession && !naukriSession.connected && (
-              <div className="naukri-session-warning-card">
-                <div className="session-warning-left">
-                  <div className="session-warning-icon">
-                    <AlertTriangle size={15} color="#b45309" />
+            {/* Live Dynamic Multi-Portal Session Warning Banner if Expired or Disconnected */}
+            {(() => {
+              const naukriOff = naukriSession && !naukriSession.connected;
+              const indeedOff = indeedSession && !indeedSession.connected;
+              if (!naukriOff && !indeedOff) return null;
+
+              let title = '';
+              let desc = '';
+              let btnText = '';
+
+              if (naukriOff && indeedOff) {
+                title = 'Portal Accounts Disconnected';
+                desc = 'Both Naukri and Indeed accounts need connection to run autonomous crawling and 1-click apply.';
+                btnText = 'Connect Portals';
+              } else if (naukriOff) {
+                title = 'Naukri Session Disconnected';
+                desc = 'Connect your registered 10-digit mobile number via SMS OTP in Settings to enable autonomous crawl and 1-click apply.';
+                btnText = 'Connect Naukri (OTP)';
+              } else {
+                title = 'Indeed Session Disconnected';
+                desc = 'Launch 1-click Chrome login in Settings to save your authenticated session and bypass Cloudflare bot checks.';
+                btnText = 'Connect Indeed';
+              }
+
+              return (
+                <div className="naukri-session-warning-card">
+                  <div className="session-warning-left">
+                    <div className="session-warning-icon">
+                      <AlertTriangle size={15} color="#b45309" />
+                    </div>
+                    <div className="session-warning-text">
+                      <strong>{title}:</strong>{' '}
+                      <span>{desc}</span>
+                    </div>
                   </div>
-                  <div className="session-warning-text">
-                    <strong>{naukriSession.expired ? 'Naukri Session Expired' : 'Naukri Session Disconnected'}:</strong>{' '}
-                    <span>
-                      {naukriSession.expired
-                        ? `Session expired (${naukriSession.age_days}d old). Re-authenticate to keep 1-click apply and autonomous crawl running.`
-                        : 'Connect your session once in Chrome to bypass OTP and anti-bot verification.'}
-                    </span>
-                  </div>
+                  <button
+                    type="button"
+                    className="session-reconnect-btn"
+                    onClick={handleRedirectToPortalSettings}
+                    title="Go to Settings > Portal Accounts"
+                  >
+                    <span>{btnText}</span>
+                    <ExternalLink size={12} />
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  className="session-reconnect-btn"
-                  onClick={handleQuickSessionLogin}
-                  disabled={isReconnectingSession}
-                  title="Launch 1-time Chrome window to refresh your Naukri cookies"
-                >
-                  {isReconnectingSession ? (
-                    <>
-                      <Loader2 size={12} className="spin" />
-                      <span>Opening Chrome...</span>
-                    </>
-                  ) : (
-                    <>
-                      <ExternalLink size={12} />
-                      <span>{naukriSession.expired ? 'Re-login (10s)' : 'Connect (10s)'}</span>
-                    </>
-                  )}
-                </button>
-              </div>
-            )}
+              );
+            })()}
 
             {/* Pipeline Controls Bar */}
             <div className="pipeline-controls-bar">
