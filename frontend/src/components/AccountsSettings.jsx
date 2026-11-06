@@ -7,7 +7,6 @@ import {
   AlertCircle,
   RefreshCw,
   Smartphone,
-  Laptop,
   Mail,
   Lock,
   Eye,
@@ -21,8 +20,7 @@ import { api } from '../api';
 export default function AccountsSettings({ notify }) {
   const [loading, setLoading] = useState(true);
 
-  // Dual-mode selection for Naukri (Primary Mobile OTP)
-  const [naukriMode, setNaukriMode] = useState('mobile'); // 'mobile' | 'laptop'
+  // Naukri Mobile OTP Login State
   const [mobileLoginType, setMobileLoginType] = useState('otp'); // 'otp' | 'password'
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
@@ -37,8 +35,7 @@ export default function AccountsSettings({ notify }) {
   const [isVerifyingOtp, setIsVerifyingOtp] = useState(false);
   const [otpError, setOtpError] = useState('');
 
-  // Laptop Naukri session state
-  const [launchingNaukriSession, setLaunchingNaukriSession] = useState(false);
+  // Naukri session status
   const [refreshingNaukriSession, setRefreshingNaukriSession] = useState(false);
   const [naukriSessionInfo, setNaukriSessionInfo] = useState({
     connected: false,
@@ -109,41 +106,6 @@ export default function AccountsSettings({ notify }) {
     }
   };
 
-  // Laptop Chrome launcher for Naukri
-  const handleLaunchNaukriSession = async () => {
-    try {
-      setLaunchingNaukriSession(true);
-      const res = await api.launchNaukriSession();
-      if (notify) {
-        notify(res.message || 'Launched Chrome window! Log into Naukri and press Enter in the terminal.', 'info');
-      }
-      
-      let attempts = 0;
-      const interval = setInterval(async () => {
-        attempts += 1;
-        try {
-          const statusRes = await api.getNaukriSessionStatus();
-          setNaukriSessionInfo(statusRes);
-          if (statusRes.connected || attempts >= 10) {
-            clearInterval(interval);
-            setLaunchingNaukriSession(false);
-            if (statusRes.connected && notify) {
-              notify('🎉 Naukri session successfully captured and verified!', 'success');
-            }
-          }
-        } catch {
-          if (attempts >= 10) {
-            clearInterval(interval);
-            setLaunchingNaukriSession(false);
-          }
-        }
-      }, 4000);
-
-    } catch (err) {
-      setLaunchingNaukriSession(false);
-      if (notify) notify('Failed to launch Naukri session: ' + err.message, 'error');
-    }
-  };
 
   // Laptop Chrome launcher for Indeed
   const handleLaunchIndeedSession = async () => {
@@ -348,204 +310,143 @@ export default function AccountsSettings({ notify }) {
           </div>
         </div>
 
-        {/* DUAL-MODE SELECTOR TOGGLE BAR */}
-        <div className="portal-mode-toggle-bar">
-          <button
-            type="button"
-            className={`portal-mode-pill ${naukriMode === 'mobile' ? 'active' : ''}`}
-            onClick={() => { setNaukriMode('mobile'); setIsReconnecting(false); }}
-          >
-            <Smartphone size={15} />
-            <span>Mobile Login (OTP)</span>
-            <span className="portal-pill-badge">Direct on Phone</span>
-          </button>
-          <button
-            type="button"
-            className={`portal-mode-pill ${naukriMode === 'laptop' ? 'active' : ''}`}
-            onClick={() => setNaukriMode('laptop')}
-          >
-            <Laptop size={15} />
-            <span>Laptop Browser</span>
-          </button>
-        </div>
-
-        {/* MODE 1: MOBILE LOGIN (OTP) */}
-        {naukriMode === 'mobile' && (
-          <div>
-            {/* If Connected and NOT re-connecting: show clean active banner */}
-            {naukriSessionInfo.connected && !isReconnecting ? (
-              <div>
-                <div className="portal-session-banner" style={{
-                  background: 'rgba(16, 185, 129, 0.08)',
-                  border: '1px solid rgba(16, 185, 129, 0.25)',
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem', fontWeight: 600, color: 'var(--emerald)' }}>
-                    🟢 Naukri Persistent Browser Session is Active
-                  </div>
-                  <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-                    Your authenticated session cookies are active. The agent can auto-apply to Naukri 1-Click jobs autonomously with zero password prompts.
-                  </p>
-                </div>
-
-                <div className="portal-actions-footer">
-                  <button
-                    type="button"
-                    onClick={() => setIsReconnecting(true)}
-                    className="portal-reconnect-btn"
-                  >
-                    <RotateCcw size={14} />
-                    <span>Re-connect / Refresh Mobile Session</span>
-                  </button>
-
-                  <span className="portal-path-indicator">
-                    Vault: <code>backend/data/browser_session/</code>
-                  </span>
-                </div>
-              </div>
-            ) : (
-              /* Mobile Credentials & OTP Form */
-              <form onSubmit={handleMobileConnect} className="portal-mobile-form">
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <div style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--text-main)' }}>
-                    {isReconnecting ? '🔄 Re-connect Naukri Account' : '📱 Connect Naukri via Mobile'}
-                  </div>
-                  {isReconnecting && (
-                    <button
-                      type="button"
-                      onClick={() => setIsReconnecting(false)}
-                      style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', fontSize: '0.75rem', cursor: 'pointer' }}
-                    >
-                      Cancel
-                    </button>
-                  )}
-                </div>
-
-                {/* Sub-mode selector: Password vs Direct OTP */}
-                <div className="portal-type-toggle">
-                  <button
-                    type="button"
-                    className={`portal-type-btn ${mobileLoginType === 'password' ? 'active' : ''}`}
-                    onClick={() => setMobileLoginType('password')}
-                  >
-                    <KeyRound size={13} />
-                    <span>Email &amp; Password</span>
-                  </button>
-                  <button
-                    type="button"
-                    className={`portal-type-btn ${mobileLoginType === 'otp' ? 'active' : ''}`}
-                    onClick={() => setMobileLoginType('otp')}
-                  >
-                    <Smartphone size={13} />
-                    <span>Direct Mobile OTP</span>
-                  </button>
-                </div>
-
-                {/* Field 1: Email or Mobile */}
-                <div className="portal-form-field">
-                  <label className="portal-field-label">
-                    <span>{mobileLoginType === 'password' ? 'Naukri Email or Mobile Number' : 'Registered 10-Digit Mobile Number'}</span>
-                  </label>
-                  <div className="portal-input-container">
-                    {mobileLoginType === 'password' ? (
-                      <Mail size={16} className="portal-input-icon" />
-                    ) : (
-                      <Smartphone size={16} className="portal-input-icon" />
-                    )}
-                    <input
-                      type={mobileLoginType === 'otp' ? 'tel' : 'text'}
-                      value={identifier}
-                      onChange={(e) => setIdentifier(e.target.value)}
-                      placeholder={mobileLoginType === 'password' ? 'e.g. name@gmail.com or 9876543210' : 'e.g. 9876543210'}
-                      className="portal-text-input"
-                      required
-                      autoComplete="username"
-                    />
-                  </div>
-                </div>
-
-                {/* Field 2: Password (Only for password flow) */}
-                {mobileLoginType === 'password' && (
-                  <div className="portal-form-field">
-                    <label className="portal-field-label">
-                      <span>Naukri Account Password</span>
-                    </label>
-                    <div className="portal-input-container">
-                      <Lock size={16} className="portal-input-icon" />
-                      <input
-                        type={showPassword ? 'text' : 'password'}
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        placeholder="••••••••••••"
-                        className="portal-text-input"
-                        required
-                        autoComplete="current-password"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowPassword(!showPassword)}
-                        className="portal-password-toggle"
-                        title={showPassword ? 'Hide password' : 'Show password'}
-                      >
-                        {showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                <div className="portal-form-note">
-                  <ShieldCheck size={14} color="#ea580c" style={{ flexShrink: 0, marginTop: '2px' }} />
-                  <span>
-                    <strong>Zero-Password Storage:</strong> Credentials are used exclusively for one-time headless session verification and are never stored on disk.
-                  </span>
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={isConnectingMobile}
-                  className="portal-launch-btn"
-                  style={{ width: '100%', marginTop: '4px' }}
-                >
-                  {isConnectingMobile ? <Loader2 size={16} className="spin" /> : <Smartphone size={16} />}
-                  <span>{isConnectingMobile ? 'Connecting to Naukri... Please wait' : 'Connect Naukri via OTP'}</span>
-                </button>
-              </form>
-            )}
-          </div>
-        )}
-
-        {/* MODE 2: LAPTOP BROWSER LOGIN (EXISTING INTACT FLOW) */}
-        {naukriMode === 'laptop' && (
+        {/* NAUKRI 100% MOBILE HEADLESS OTP FLOW */}
+        {naukriSessionInfo.connected && !isReconnecting ? (
           <div>
             <div className="portal-session-banner" style={{
-              background: naukriSessionInfo.connected ? 'rgba(16, 185, 129, 0.08)' : 'rgba(245, 158, 11, 0.08)',
-              border: `1px solid ${naukriSessionInfo.connected ? 'rgba(16, 185, 129, 0.25)' : 'rgba(245, 158, 11, 0.25)'}`,
+              background: 'rgba(16, 185, 129, 0.08)',
+              border: '1px solid rgba(16, 185, 129, 0.25)',
             }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem', fontWeight: 600, color: naukriSessionInfo.connected ? 'var(--emerald)' : 'var(--amber)' }}>
-                {naukriSessionInfo.connected ? '🟢 Naukri Persistent Browser Session is Active' : '🟡 Naukri Session Not Initialized'}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem', fontWeight: 600, color: 'var(--emerald)' }}>
+                🟢 Naukri Persistent Browser Session is Active
               </div>
               <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-                {naukriSessionInfo.connected
-                  ? 'Your authenticated session cookies are stored locally. The agent can auto-apply to Naukri 1-Click jobs autonomously with zero password prompts.'
-                  : 'Naukri requires a one-time human authentication (to solve any SMS/WhatsApp OTP). Click the button below to launch Chrome on your PC, log into your account, and save your session permanently.'}
+                Your authenticated session cookies are active. The agent can auto-apply to Naukri 1-Click jobs autonomously with zero password prompts.
               </p>
             </div>
 
             <div className="portal-actions-footer">
               <button
                 type="button"
-                onClick={handleLaunchNaukriSession}
-                disabled={launchingNaukriSession}
-                className="portal-launch-btn"
+                onClick={() => setIsReconnecting(true)}
+                className="portal-reconnect-btn"
               >
-                {launchingNaukriSession ? <Loader2 size={16} className="spin" /> : <ExternalLink size={16} />}
-                <span>{launchingNaukriSession ? 'Waiting for Login & Confirmation...' : 'Launch One-Time Chrome Login (Naukri)'}</span>
+                <RotateCcw size={14} />
+                <span>Re-connect / Refresh Mobile Session</span>
               </button>
 
               <span className="portal-path-indicator">
-                Path: <code>backend/data/browser_session/</code>
+                Vault: <code>backend/data/browser_session/</code>
               </span>
             </div>
           </div>
+        ) : (
+          /* Mobile Credentials & OTP Form */
+          <form onSubmit={handleMobileConnect} className="portal-mobile-form">
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--text-main)' }}>
+                {isReconnecting ? '🔄 Re-connect Naukri Account' : '📱 Connect Naukri via Mobile'}
+              </div>
+              {isReconnecting && (
+                <button
+                  type="button"
+                  onClick={() => setIsReconnecting(false)}
+                  style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', fontSize: '0.75rem', cursor: 'pointer' }}
+                >
+                  Cancel
+                </button>
+              )}
+            </div>
+
+            {/* Sub-mode selector: Password vs Direct OTP */}
+            <div className="portal-type-toggle">
+              <button
+                type="button"
+                className={`portal-type-btn ${mobileLoginType === 'password' ? 'active' : ''}`}
+                onClick={() => setMobileLoginType('password')}
+              >
+                <KeyRound size={13} />
+                <span>Email &amp; Password</span>
+              </button>
+              <button
+                type="button"
+                className={`portal-type-btn ${mobileLoginType === 'otp' ? 'active' : ''}`}
+                onClick={() => setMobileLoginType('otp')}
+              >
+                <Smartphone size={13} />
+                <span>Direct Mobile OTP</span>
+              </button>
+            </div>
+
+            {/* Field 1: Email or Mobile */}
+            <div className="portal-form-field">
+              <label className="portal-field-label">
+                <span>{mobileLoginType === 'password' ? 'Naukri Email or Mobile Number' : 'Registered 10-Digit Mobile Number'}</span>
+              </label>
+              <div className="portal-input-container">
+                {mobileLoginType === 'password' ? (
+                  <Mail size={16} className="portal-input-icon" />
+                ) : (
+                  <Smartphone size={16} className="portal-input-icon" />
+                )}
+                <input
+                  type={mobileLoginType === 'otp' ? 'tel' : 'text'}
+                  value={identifier}
+                  onChange={(e) => setIdentifier(e.target.value)}
+                  placeholder={mobileLoginType === 'password' ? 'e.g. name@gmail.com or 9876543210' : 'e.g. 9876543210'}
+                  className="portal-text-input"
+                  required
+                  autoComplete="username"
+                />
+              </div>
+            </div>
+
+            {/* Field 2: Password (Only for password flow) */}
+            {mobileLoginType === 'password' && (
+              <div className="portal-form-field">
+                <label className="portal-field-label">
+                  <span>Naukri Account Password</span>
+                </label>
+                <div className="portal-input-container">
+                  <Lock size={16} className="portal-input-icon" />
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="••••••••••••"
+                    className="portal-text-input"
+                    required
+                    autoComplete="current-password"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="portal-password-toggle"
+                    title={showPassword ? 'Hide password' : 'Show password'}
+                  >
+                    {showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div className="portal-form-note">
+              <ShieldCheck size={14} color="#ea580c" style={{ flexShrink: 0, marginTop: '2px' }} />
+              <span>
+                <strong>Zero-Password Storage:</strong> Credentials are used exclusively for one-time headless session verification and are never stored on disk.
+              </span>
+            </div>
+
+            <button
+              type="submit"
+              disabled={isConnectingMobile}
+              className="portal-launch-btn"
+              style={{ width: '100%', marginTop: '4px' }}
+            >
+              {isConnectingMobile ? <Loader2 size={16} className="spin" /> : <Smartphone size={16} />}
+              <span>{isConnectingMobile ? 'Connecting to Naukri... Please wait' : 'Connect Naukri via OTP'}</span>
+            </button>
+          </form>
         )}
       </div>
 
