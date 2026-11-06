@@ -604,9 +604,9 @@ class HeadlessAuthManager:
             elif use_code_mode or not password:
                 # If password input exists but user requested code login, click "Sign in with login code" if present
                 code_opt = page.query_selector(
-                    "button:has-text('login code' i), a:has-text('login code' i), "
-                    "button:has-text('Send a code' i), a:has-text('Send a code' i), "
-                    "button:has-text('Email a code' i), a:has-text('Email a code' i)"
+                    "button:has-text('login code'), a:has-text('login code'), "
+                    "button:has-text('Send a code'), a:has-text('Send a code'), "
+                    "button:has-text('Email a code'), a:has-text('Email a code')"
                 )
                 if code_opt:
                     code_opt.click()
