@@ -959,8 +959,7 @@ async def connect_naukri_mobile(req: NaukriMobileConnectRequest):
       - 'ERROR': if credentials or connection failed.
     """
     logger.info(f"Mobile Naukri connection requested for identifier: {req.identifier[:4]}***")
-    result = await asyncio.to_thread(
-        headless_auth_manager.start_naukri_login,
+    result = await headless_auth_manager.start_naukri_login(
         identifier=req.identifier,
         password=req.password,
         use_otp_mode=bool(req.use_otp),
@@ -976,8 +975,7 @@ async def verify_naukri_mobile_otp(req: NaukriVerifyOtpRequest):
     Saves authenticated cookies to permanent storage and completes connection.
     """
     logger.info(f"Mobile Naukri OTP verification received for session: {req.session_id}")
-    result = await asyncio.to_thread(
-        headless_auth_manager.verify_naukri_otp,
+    result = await headless_auth_manager.verify_naukri_otp(
         session_id=req.session_id,
         otp=req.otp,
     )
@@ -987,7 +985,7 @@ async def verify_naukri_mobile_otp(req: NaukriVerifyOtpRequest):
 @app.post("/api/portals/naukri/cancel-mobile", tags=["Portals"])
 async def cancel_naukri_mobile_session(req: NaukriCancelSessionRequest):
     """Cancels a pending headless login session and frees browser resources."""
-    headless_auth_manager._close_session(req.session_id)
+    await headless_auth_manager.close_session(req.session_id)
     return {"status": "cancelled", "message": "Login session cancelled successfully."}
 
 
@@ -1095,8 +1093,7 @@ async def connect_indeed_mobile(req: IndeedMobileConnectRequest):
       - 'ERROR': if credentials or connection failed.
     """
     logger.info(f"Mobile Indeed connection requested for identifier: {req.identifier[:4]}***")
-    result = await asyncio.to_thread(
-        headless_auth_manager.start_indeed_login,
+    result = await headless_auth_manager.start_indeed_login(
         identifier=req.identifier,
         password=req.password,
         use_code_mode=bool(req.use_code),
@@ -1112,8 +1109,7 @@ async def verify_indeed_mobile_otp(req: IndeedVerifyOtpRequest):
     Saves authenticated cookies to permanent storage and completes connection.
     """
     logger.info(f"Mobile Indeed OTP/code verification received for session: {req.session_id}")
-    result = await asyncio.to_thread(
-        headless_auth_manager.verify_indeed_otp,
+    result = await headless_auth_manager.verify_indeed_otp(
         session_id=req.session_id,
         otp=req.verification_code,
     )
@@ -1123,7 +1119,7 @@ async def verify_indeed_mobile_otp(req: IndeedVerifyOtpRequest):
 @app.post("/api/portals/indeed/cancel-mobile", tags=["Portals"])
 async def cancel_indeed_mobile_session(req: IndeedCancelSessionRequest):
     """Cancels a pending headless Indeed login session and frees browser resources."""
-    headless_auth_manager._close_session(req.session_id)
+    await headless_auth_manager.close_session(req.session_id)
     return {"status": "cancelled", "message": "Indeed login session cancelled successfully."}
 
 
