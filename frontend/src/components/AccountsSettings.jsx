@@ -7,12 +7,7 @@ import {
   AlertCircle,
   RefreshCw,
   Smartphone,
-  Mail,
-  Lock,
-  Eye,
-  EyeOff,
   ShieldCheck,
-  KeyRound,
   RotateCcw,
 } from 'lucide-react';
 import { api } from '../api';
@@ -20,11 +15,8 @@ import { api } from '../api';
 export default function AccountsSettings({ notify }) {
   const [loading, setLoading] = useState(true);
 
-  // Naukri Mobile OTP Login State
-  const [mobileLoginType, setMobileLoginType] = useState('otp'); // 'otp' | 'password'
+  // Naukri Mobile OTP Login State (100% Direct Mobile Phone + OTP)
   const [identifier, setIdentifier] = useState('');
-  const [password, setPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
   const [isConnectingMobile, setIsConnectingMobile] = useState(false);
   const [isReconnecting, setIsReconnecting] = useState(false);
 
@@ -143,24 +135,21 @@ export default function AccountsSettings({ notify }) {
     }
   };
 
-  // Mobile Connect Handler for Naukri
+  // Mobile Connect Handler for Naukri (100% Direct Mobile Phone + OTP)
   const handleMobileConnect = async (e) => {
     if (e) e.preventDefault();
-    if (!identifier.trim()) {
-      if (notify) notify('Please enter your Naukri 10-digit mobile number or email.', 'warning');
-      return;
-    }
-    if (mobileLoginType === 'password' && !password.trim()) {
-      if (notify) notify('Please enter your account password.', 'warning');
+    const cleanNumber = identifier.trim().replace(/\D/g, '');
+    if (!cleanNumber || cleanNumber.length < 10) {
+      if (notify) notify('Please enter your 10-digit registered mobile number.', 'warning');
       return;
     }
 
     try {
       setIsConnectingMobile(true);
       const res = await api.connectNaukriMobile({
-        identifier: identifier.trim(),
-        password: mobileLoginType === 'password' ? password : null,
-        use_otp: mobileLoginType === 'otp',
+        identifier: cleanNumber,
+        password: null,
+        use_otp: true,
       });
 
       if (res.status === 'OTP_REQUIRED') {
@@ -174,7 +163,7 @@ export default function AccountsSettings({ notify }) {
         setIsReconnecting(false);
         checkNaukriStatus(false);
       } else {
-        if (notify) notify(res.message || 'Failed to connect. Please verify your credentials.', 'error');
+        if (notify) notify(res.message || 'Failed to connect. Please check your mobile number.', 'error');
       }
     } catch (err) {
       if (notify) notify('Connection error: ' + err.message, 'error');
@@ -358,82 +347,29 @@ export default function AccountsSettings({ notify }) {
               )}
             </div>
 
-            {/* Sub-mode selector: Password vs Direct OTP */}
-            <div className="portal-type-toggle">
-              <button
-                type="button"
-                className={`portal-type-btn ${mobileLoginType === 'password' ? 'active' : ''}`}
-                onClick={() => setMobileLoginType('password')}
-              >
-                <KeyRound size={13} />
-                <span>Email &amp; Password</span>
-              </button>
-              <button
-                type="button"
-                className={`portal-type-btn ${mobileLoginType === 'otp' ? 'active' : ''}`}
-                onClick={() => setMobileLoginType('otp')}
-              >
-                <Smartphone size={13} />
-                <span>Direct Mobile OTP</span>
-              </button>
-            </div>
-
-            {/* Field 1: Email or Mobile */}
+            {/* Registered 10-Digit Mobile Number Field */}
             <div className="portal-form-field">
               <label className="portal-field-label">
-                <span>{mobileLoginType === 'password' ? 'Naukri Email or Mobile Number' : 'Registered 10-Digit Mobile Number'}</span>
+                <span>Registered 10-Digit Mobile Number</span>
               </label>
               <div className="portal-input-container">
-                {mobileLoginType === 'password' ? (
-                  <Mail size={16} className="portal-input-icon" />
-                ) : (
-                  <Smartphone size={16} className="portal-input-icon" />
-                )}
+                <Smartphone size={16} className="portal-input-icon" />
                 <input
-                  type={mobileLoginType === 'otp' ? 'tel' : 'text'}
+                  type="tel"
                   value={identifier}
-                  onChange={(e) => setIdentifier(e.target.value)}
-                  placeholder={mobileLoginType === 'password' ? 'e.g. name@gmail.com or 9876543210' : 'e.g. 9876543210'}
+                  onChange={(e) => setIdentifier(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                  placeholder="e.g. 9912565635"
                   className="portal-text-input"
                   required
-                  autoComplete="username"
+                  autoComplete="tel"
                 />
               </div>
             </div>
 
-            {/* Field 2: Password (Only for password flow) */}
-            {mobileLoginType === 'password' && (
-              <div className="portal-form-field">
-                <label className="portal-field-label">
-                  <span>Naukri Account Password</span>
-                </label>
-                <div className="portal-input-container">
-                  <Lock size={16} className="portal-input-icon" />
-                  <input
-                    type={showPassword ? 'text' : 'password'}
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="••••••••••••"
-                    className="portal-text-input"
-                    required
-                    autoComplete="current-password"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="portal-password-toggle"
-                    title={showPassword ? 'Hide password' : 'Show password'}
-                  >
-                    {showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
-                  </button>
-                </div>
-              </div>
-            )}
-
             <div className="portal-form-note">
               <ShieldCheck size={14} color="#ea580c" style={{ flexShrink: 0, marginTop: '2px' }} />
               <span>
-                <strong>Zero-Password Storage:</strong> Credentials are used exclusively for one-time headless session verification and are never stored on disk.
+                <strong>Passwordless Verification:</strong> Naukri authenticates via a one-time SMS/WhatsApp OTP sent to your registered mobile number. No password required.
               </span>
             </div>
 
@@ -444,7 +380,7 @@ export default function AccountsSettings({ notify }) {
               style={{ width: '100%', marginTop: '4px' }}
             >
               {isConnectingMobile ? <Loader2 size={16} className="spin" /> : <Smartphone size={16} />}
-              <span>{isConnectingMobile ? 'Connecting to Naukri... Please wait' : 'Connect Naukri via OTP'}</span>
+              <span>{isConnectingMobile ? 'Connecting to Naukri... Please wait' : 'Send Verification OTP'}</span>
             </button>
           </form>
         )}
