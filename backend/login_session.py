@@ -30,19 +30,19 @@ PORTALS = {
 }
 
 
-async def verify_portal_login(portal_name: str, page, cookies: list[dict]) -> tuple[bool, str]:
+def check_portal_login_sync(portal_name: str, page_url: str, cookies: list[dict]) -> tuple[bool, str]:
     """
     Strictly verifies whether the user is genuinely logged into their candidate account.
-    Prevents false-positive green marks caused by anonymous guest cookies.
+    Pure synchronous verification to prevent event-loop conflicts.
     """
-    current_url = page.url.lower()
+    current_url = page_url.lower()
     cookie_dict = {c.get("name", "").lower(): c.get("value", "") for c in cookies}
     cookie_names = set(cookie_dict.keys())
 
     p = portal_name.lower()
     if "naukri" in p:
         if "nlogin" in current_url:
-            return False, f"Browser is still on the Naukri login page ({page.url})."
+            return False, f"Browser is still on the Naukri login page ({page_url})."
         is_naukri_user = any(k in cookie_names for k in ["nauk_user", "user_id", "auth_token"]) or "mnjuser" in current_url
         if is_naukri_user:
             return True, "Naukri candidate profile session verified."
@@ -58,6 +58,11 @@ async def verify_portal_login(portal_name: str, page, cookies: list[dict]) -> tu
     if "/login" not in current_url and len(cookies) >= 5:
         return True, "Session cookies captured."
     return False, "Authentication not detected."
+
+
+async def verify_portal_login(portal_name: str, page, cookies: list[dict]) -> tuple[bool, str]:
+    """Async wrapper for interactive sessions."""
+    return check_portal_login_sync(portal_name, page.url, cookies)
 
 
 async def run_interactive_session(target_url: str, portal_name: str, session_dir: Optional[Path] = None):

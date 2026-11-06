@@ -35,7 +35,7 @@ from app.agent.browser import (
     DEFAULT_USER_AGENT,
 )
 from app.agent.stealth import get_stealth_chromium_args, build_stealth_js
-from login_session import verify_portal_login
+from login_session import check_portal_login_sync
 
 logger = logging.getLogger("agent.headless_auth")
 
@@ -147,7 +147,7 @@ class HeadlessAuthManager:
 
             # Check if user is already logged in with existing session
             cookies = context.cookies()
-            is_logged_in, _ = asyncio.run(verify_portal_login("Naukri", page, cookies)) if "nlogin" not in page.url else (False, "")
+            is_logged_in, _ = check_portal_login_sync("Naukri", page.url, cookies) if "nlogin" not in page.url else (False, "")
             if is_logged_in:
                 self._save_session_marker(page, cookies)
                 context.close()
@@ -195,7 +195,7 @@ class HeadlessAuthManager:
                     # 1. Check if direct login succeeded (redirected away from nlogin)
                     if "nlogin" not in curr_url and ("mnjuser" in curr_url or "mynaukri" in curr_url or "naukri.com" in curr_url):
                         cookies = context.cookies()
-                        auth_ok, reason = asyncio.run(verify_portal_login("Naukri", page, cookies))
+                        auth_ok, reason = check_portal_login_sync("Naukri", page.url, cookies)
                         if auth_ok:
                             self._save_session_marker(page, cookies)
                             context.close()
@@ -394,7 +394,7 @@ class HeadlessAuthManager:
 
                 # Check if authenticated
                 cookies = context.cookies()
-                auth_ok, auth_reason = asyncio.run(verify_portal_login("Naukri", page, cookies))
+                auth_ok, auth_reason = check_portal_login_sync("Naukri", page.url, cookies)
                 if auth_ok:
                     self._save_session_marker(page, cookies)
                     logger.info(f"✅ OTP Verified successfully for {session.identifier}!")
@@ -416,7 +416,7 @@ class HeadlessAuthManager:
 
             # Final check before giving up
             cookies = context.cookies()
-            auth_ok, auth_reason = asyncio.run(verify_portal_login("Naukri", page, cookies))
+            auth_ok, auth_reason = check_portal_login_sync("Naukri", page.url, cookies)
             if auth_ok:
                 self._save_session_marker(page, cookies)
                 self._close_session(session_id)
