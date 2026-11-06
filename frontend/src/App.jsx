@@ -471,52 +471,88 @@ export default function App() {
         {/* TAB 1: PIPELINE BOARD */}
         {activeTab === 'pipeline' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-            {/* Live Dynamic Multi-Portal Session Warning Banner if Expired or Disconnected */}
+            {/* Live Dynamic Multi-Portal Session Warning Banner (Only on Lost Connection / Expired) */}
             {(() => {
-              const naukriOff = naukriSession && !naukriSession.connected;
-              const indeedOff = indeedSession && !indeedSession.connected;
-              if (!naukriOff && !indeedOff) return null;
+              const hasAnyConnection = Boolean(naukriSession?.connected || indeedSession?.connected);
+              const naukriExpired = Boolean(naukriSession?.expired);
+              const indeedExpired = Boolean(indeedSession?.expired);
 
-              let title = '';
-              let desc = '';
-              let btnText = '';
-
-              if (naukriOff && indeedOff) {
-                title = 'Portal Accounts Disconnected';
-                desc = 'Both Naukri and Indeed accounts need connection to run autonomous crawling and 1-click apply.';
-                btnText = 'Connect Portals';
-              } else if (naukriOff) {
-                title = 'Naukri Session Disconnected';
-                desc = 'Connect your registered 10-digit mobile number via SMS OTP in Settings to enable autonomous crawl and 1-click apply.';
-                btnText = 'Connect Naukri (OTP)';
-              } else {
-                title = 'Indeed Session Disconnected';
-                desc = 'Launch 1-click Chrome login in Settings to save your authenticated session and bypass Cloudflare bot checks.';
-                btnText = 'Connect Indeed';
+              // 1. If at least one portal is successfully connected and neither has lost connection, NO WARNING!
+              if (hasAnyConnection && !naukriExpired && !indeedExpired) {
+                return null;
               }
 
-              return (
-                <div className="naukri-session-warning-card">
-                  <div className="session-warning-left">
-                    <div className="session-warning-icon">
-                      <AlertTriangle size={15} color="#b45309" />
+              // 2. Alert ONLY when an established connection has been LOST (session expired)
+              if (naukriExpired || indeedExpired) {
+                let title = '';
+                let desc = '';
+                let btnText = '';
+
+                if (naukriExpired && indeedExpired) {
+                  title = 'Portal Connections Lost (Expired)';
+                  desc = 'Both Naukri and Indeed sessions have expired. Please re-authenticate in Settings.';
+                  btnText = 'Re-authenticate Portals';
+                } else if (naukriExpired) {
+                  title = 'Naukri Connection Lost (Expired)';
+                  desc = `Your Naukri session has expired (${naukriSession?.age_days || 0}d old). Re-connect via Mobile OTP in Settings.`;
+                  btnText = 'Re-connect Naukri (OTP)';
+                } else {
+                  title = 'Indeed Connection Lost (Expired)';
+                  desc = `Your Indeed session has expired (${indeedSession?.age_days || 0}d old). Re-connect in Settings.`;
+                  btnText = 'Re-connect Indeed';
+                }
+
+                return (
+                  <div className="naukri-session-warning-card">
+                    <div className="session-warning-left">
+                      <div className="session-warning-icon">
+                        <AlertTriangle size={15} color="#b45309" />
+                      </div>
+                      <div className="session-warning-text">
+                        <strong>{title}:</strong>{' '}
+                        <span>{desc}</span>
+                      </div>
                     </div>
-                    <div className="session-warning-text">
-                      <strong>{title}:</strong>{' '}
-                      <span>{desc}</span>
-                    </div>
+                    <button
+                      type="button"
+                      className="session-reconnect-btn"
+                      onClick={handleRedirectToPortalSettings}
+                      title="Go to Settings > Portal Accounts"
+                    >
+                      <span>{btnText}</span>
+                      <ExternalLink size={12} />
+                    </button>
                   </div>
-                  <button
-                    type="button"
-                    className="session-reconnect-btn"
-                    onClick={handleRedirectToPortalSettings}
-                    title="Go to Settings > Portal Accounts"
-                  >
-                    <span>{btnText}</span>
-                    <ExternalLink size={12} />
-                  </button>
-                </div>
-              );
+                );
+              }
+
+              // 3. Initial fresh state only when ZERO portals are connected at all
+              if (!hasAnyConnection && naukriSession && indeedSession) {
+                return (
+                  <div className="naukri-session-warning-card">
+                    <div className="session-warning-left">
+                      <div className="session-warning-icon">
+                        <AlertTriangle size={15} color="#b45309" />
+                      </div>
+                      <div className="session-warning-text">
+                        <strong>No Job Portals Connected:</strong>{' '}
+                        <span>Connect Naukri (via Mobile OTP) or Indeed in Settings to start autonomous job applications.</span>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="session-reconnect-btn"
+                      onClick={handleRedirectToPortalSettings}
+                      title="Go to Settings > Portal Accounts"
+                    >
+                      <span>Connect a Portal</span>
+                      <ExternalLink size={12} />
+                    </button>
+                  </div>
+                );
+              }
+
+              return null;
             })()}
 
             {/* Pipeline Controls Bar */}
