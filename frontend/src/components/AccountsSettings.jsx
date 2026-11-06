@@ -30,7 +30,17 @@ export default function AccountsSettings({ notify }) {
   const [isConnectingMobile, setIsConnectingMobile] = useState(false);
   const [isReconnecting, setIsReconnecting] = useState(false);
 
-  // OTP Modal State (Ready for Step 4)
+  // Dual-mode selection for Indeed (Step 5)
+  const [indeedMode, setIndeedMode] = useState('mobile'); // 'mobile' | 'laptop'
+  const [indeedLoginType, setIndeedLoginType] = useState('code'); // 'code' | 'password'
+  const [indeedIdentifier, setIndeedIdentifier] = useState('');
+  const [indeedPassword, setIndeedPassword] = useState('');
+  const [showIndeedPassword, setShowIndeedPassword] = useState(false);
+  const [isConnectingIndeedMobile, setIsConnectingIndeedMobile] = useState(false);
+  const [isIndeedReconnecting, setIsIndeedReconnecting] = useState(false);
+
+  // OTP Modal State (Unified for Naukri & Indeed)
+  const [activePortal, setActivePortal] = useState('naukri'); // 'naukri' | 'indeed'
   const [otpModalOpen, setOtpModalOpen] = useState(false);
   const [activeSessionId, setActiveSessionId] = useState(null);
   const [otpValue, setOtpValue] = useState('');
@@ -181,7 +191,7 @@ export default function AccountsSettings({ notify }) {
     }
   };
 
-  // Mobile Connect Handler
+  // Mobile Connect Handler for Naukri
   const handleMobileConnect = async (e) => {
     if (e) e.preventDefault();
     if (!identifier.trim()) {
@@ -195,6 +205,7 @@ export default function AccountsSettings({ notify }) {
 
     try {
       setIsConnectingMobile(true);
+      setActivePortal('naukri');
       const res = await api.connectNaukriMobile({
         identifier: identifier.trim(),
         password: mobileLoginType === 'password' ? password : null,
@@ -203,6 +214,7 @@ export default function AccountsSettings({ notify }) {
 
       if (res.status === 'OTP_REQUIRED') {
         setActiveSessionId(res.session_id);
+        setActivePortal('naukri');
         setOtpModalOpen(true);
         setOtpValue('');
         setOtpError('');
@@ -221,36 +233,92 @@ export default function AccountsSettings({ notify }) {
     }
   };
 
-  // Mobile OTP Verification Handler
+  // Mobile Connect Handler for Indeed (Step 5)
+  const handleIndeedMobileConnect = async (e) => {
+    if (e) e.preventDefault();
+    if (!indeedIdentifier.trim()) {
+      if (notify) notify('Please enter your Indeed email or phone number.', 'warning');
+      return;
+    }
+    if (indeedLoginType === 'password' && !indeedPassword.trim()) {
+      if (notify) notify('Please enter your Indeed password.', 'warning');
+      return;
+    }
+
+    try {
+      setIsConnectingIndeedMobile(true);
+      setActivePortal('indeed');
+      const res = await api.connectIndeedMobile({
+        identifier: indeedIdentifier.trim(),
+        password: indeedLoginType === 'password' ? indeedPassword : null,
+        use_code: indeedLoginType === 'code',
+      });
+
+      if (res.status === 'OTP_REQUIRED') {
+        setActiveSessionId(res.session_id);
+        setActivePortal('indeed');
+        setOtpModalOpen(true);
+        setOtpValue('');
+        setOtpError('');
+        if (notify) notify(res.message || 'Verification code sent to your email or phone!', 'info');
+      } else if (res.status === 'SUCCESS') {
+        if (notify) notify(res.message || '🎉 Indeed account connected successfully!', 'success');
+        setIsIndeedReconnecting(false);
+        checkIndeedStatus(false);
+      } else {
+        if (notify) notify(res.message || 'Failed to connect Indeed. Please verify your credentials.', 'error');
+      }
+    } catch (err) {
+      if (notify) notify('Indeed connection error: ' + err.message, 'error');
+    } finally {
+      setIsConnectingIndeedMobile(false);
+    }
+  };
+
+  // Unified Mobile OTP / Verification Code Handler
   const handleVerifyOtp = async (e) => {
     if (e) e.preventDefault();
     if (!otpValue.trim() || otpValue.trim().length < 4) {
-      setOtpError('Please enter a valid verification OTP code.');
+      setOtpError('Please enter a valid verification code.');
       return;
     }
 
     try {
       setIsVerifyingOtp(true);
       setOtpError('');
-      const res = await api.verifyNaukriMobileOtp({
-        session_id: activeSessionId,
-        otp: otpValue.trim(),
-      });
+      let res;
+      if (activePortal === 'indeed') {
+        res = await api.verifyIndeedMobileOtp({
+          session_id: activeSessionId,
+          code: otpValue.trim(),
+        });
+      } else {
+        res = await api.verifyNaukriMobileOtp({
+          session_id: activeSessionId,
+          otp: otpValue.trim(),
+        });
+      }
 
       if (res.status === 'SUCCESS') {
-        if (notify) notify(res.message || '🎉 Naukri session successfully verified!', 'success');
+        const portalLabel = activePortal === 'indeed' ? 'Indeed' : 'Naukri';
+        if (notify) notify(res.message || `🎉 ${portalLabel} session successfully verified!`, 'success');
         setOtpModalOpen(false);
         setActiveSessionId(null);
         setOtpValue('');
-        setIsReconnecting(false);
-        checkNaukriStatus(true);
+        if (activePortal === 'indeed') {
+          setIsIndeedReconnecting(false);
+          checkIndeedStatus(true);
+        } else {
+          setIsReconnecting(false);
+          checkNaukriStatus(true);
+        }
       } else {
-        setOtpError(res.message || 'Verification failed. Please re-enter the OTP.');
-        if (notify) notify(res.message || 'Invalid OTP.', 'error');
+        setOtpError(res.message || 'Verification failed. Please re-enter the code.');
+        if (notify) notify(res.message || 'Invalid verification code.', 'error');
       }
     } catch (err) {
-      setOtpError(err.message || 'Failed to verify OTP.');
-      if (notify) notify('OTP verification error: ' + err.message, 'error');
+      setOtpError(err.message || 'Failed to verify code.');
+      if (notify) notify('Verification error: ' + err.message, 'error');
     } finally {
       setIsVerifyingOtp(false);
     }
@@ -260,7 +328,11 @@ export default function AccountsSettings({ notify }) {
   const handleCancelMobileSession = async () => {
     if (activeSessionId) {
       try {
-        await api.cancelNaukriMobileSession(activeSessionId);
+        if (activePortal === 'indeed') {
+          await api.cancelIndeedMobileSession(activeSessionId);
+        } else {
+          await api.cancelNaukriMobileSession(activeSessionId);
+        }
       } catch {
         // ignore
       }
@@ -587,49 +659,219 @@ export default function AccountsSettings({ notify }) {
           </div>
         </div>
 
-        <div className="portal-session-banner" style={{
-          background: indeedSessionInfo.connected ? 'rgba(16, 185, 129, 0.08)' : 'rgba(245, 158, 11, 0.08)',
-          border: `1px solid ${indeedSessionInfo.connected ? 'rgba(16, 185, 129, 0.25)' : 'rgba(245, 158, 11, 0.25)'}`,
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem', fontWeight: 600, color: indeedSessionInfo.connected ? 'var(--emerald)' : 'var(--amber)' }}>
-            {indeedSessionInfo.connected ? '🟢 Indeed Persistent Browser Session is Active' : '🟡 Indeed Session Not Initialized'}
-          </div>
-          <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-            {indeedSessionInfo.connected
-              ? 'Your authenticated session cookies are stored locally in an isolated directory. The agent can auto-apply to Indeed "Easily Apply" jobs autonomously with zero password prompts.'
-              : 'Indeed requires a one-time human authentication (email OTP or Google sign-in). Click the button below to launch Chrome on your PC, log into your account once, and save your cookies permanently.'}
-          </p>
-        </div>
-
-        <div className="portal-actions-footer">
+        {/* DUAL-MODE SELECTOR TOGGLE BAR FOR INDEED */}
+        <div className="portal-mode-toggle-bar">
           <button
             type="button"
-            onClick={handleLaunchIndeedSession}
-            disabled={launchingIndeedSession}
-            className="portal-launch-btn"
+            className={`portal-mode-pill ${indeedMode === 'mobile' ? 'active' : ''}`}
+            onClick={() => { setIndeedMode('mobile'); setIsIndeedReconnecting(false); }}
           >
-            {launchingIndeedSession ? <Loader2 size={16} className="spin" /> : <ExternalLink size={16} />}
-            <span>{launchingIndeedSession ? 'Waiting for Login & Confirmation...' : 'Launch One-Time Chrome Login (Indeed)'}</span>
+            <Smartphone size={15} />
+            <span>Mobile Login (OTP / Code)</span>
+            <span className="portal-pill-badge">Direct on Phone</span>
           </button>
-
-          <span className="portal-path-indicator">
-            Path: <code>backend/data/indeed_session/</code>
-          </span>
+          <button
+            type="button"
+            className={`portal-mode-pill ${indeedMode === 'laptop' ? 'active' : ''}`}
+            onClick={() => setIndeedMode('laptop')}
+          >
+            <Laptop size={15} />
+            <span>Laptop Browser</span>
+          </button>
         </div>
+
+        {/* MODE 1: INDEED MOBILE LOGIN */}
+        {indeedMode === 'mobile' && (
+          <div>
+            {/* If Connected and NOT re-connecting: show clean active banner */}
+            {indeedSessionInfo.connected && !isIndeedReconnecting ? (
+              <div>
+                <div className="portal-session-banner" style={{
+                  background: 'rgba(16, 185, 129, 0.08)',
+                  border: '1px solid rgba(16, 185, 129, 0.25)',
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem', fontWeight: 600, color: 'var(--emerald)' }}>
+                    🟢 Indeed Persistent Browser Session is Active
+                  </div>
+                  <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                    Your authenticated session cookies are active. The agent can auto-apply to Indeed "Easily Apply" jobs autonomously with zero password prompts.
+                  </p>
+                </div>
+
+                <div className="portal-actions-footer">
+                  <button
+                    type="button"
+                    onClick={() => setIsIndeedReconnecting(true)}
+                    className="portal-reconnect-btn"
+                  >
+                    <RotateCcw size={14} />
+                    <span>Re-connect / Refresh Indeed Mobile Session</span>
+                  </button>
+
+                  <span className="portal-path-indicator">
+                    Vault: <code>backend/data/indeed_session/</code>
+                  </span>
+                </div>
+              </div>
+            ) : (
+              /* Mobile Credentials & Code Form for Indeed */
+              <form onSubmit={handleIndeedMobileConnect} className="portal-mobile-form">
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--text-main)' }}>
+                    {isIndeedReconnecting ? '🔄 Re-connect Indeed Account' : '📱 Connect Indeed via Mobile'}
+                  </div>
+                  {isIndeedReconnecting && (
+                    <button
+                      type="button"
+                      onClick={() => setIsIndeedReconnecting(false)}
+                      style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', fontSize: '0.75rem', cursor: 'pointer' }}
+                    >
+                      Cancel
+                    </button>
+                  )}
+                </div>
+
+                {/* Sub-mode selector: Code vs Password */}
+                <div className="portal-type-toggle">
+                  <button
+                    type="button"
+                    className={`portal-type-btn ${indeedLoginType === 'code' ? 'active' : ''}`}
+                    onClick={() => setIndeedLoginType('code')}
+                  >
+                    <Smartphone size={13} />
+                    <span>Direct Login Code (Passwordless)</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`portal-type-btn ${indeedLoginType === 'password' ? 'active' : ''}`}
+                    onClick={() => setIndeedLoginType('password')}
+                  >
+                    <KeyRound size={13} />
+                    <span>Email &amp; Password</span>
+                  </button>
+                </div>
+
+                {/* Field 1: Email or Phone */}
+                <div className="portal-form-field">
+                  <label className="portal-field-label">
+                    <span>{indeedLoginType === 'password' ? 'Indeed Email Address or Phone' : 'Registered Indeed Email or Phone'}</span>
+                  </label>
+                  <div className="portal-input-container">
+                    <Mail size={16} className="portal-input-icon" />
+                    <input
+                      type="text"
+                      value={indeedIdentifier}
+                      onChange={(e) => setIndeedIdentifier(e.target.value)}
+                      placeholder="e.g. name@gmail.com or 9876543210"
+                      className="portal-text-input"
+                      required
+                      autoComplete="username"
+                    />
+                  </div>
+                </div>
+
+                {/* Field 2: Password (Only for password flow) */}
+                {indeedLoginType === 'password' && (
+                  <div className="portal-form-field">
+                    <label className="portal-field-label">
+                      <span>Indeed Account Password</span>
+                    </label>
+                    <div className="portal-input-container">
+                      <Lock size={16} className="portal-input-icon" />
+                      <input
+                        type={showIndeedPassword ? 'text' : 'password'}
+                        value={indeedPassword}
+                        onChange={(e) => setIndeedPassword(e.target.value)}
+                        placeholder="••••••••••••"
+                        className="portal-text-input"
+                        required
+                        autoComplete="current-password"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowIndeedPassword(!showIndeedPassword)}
+                        className="portal-password-toggle"
+                        title={showIndeedPassword ? 'Hide password' : 'Show password'}
+                      >
+                        {showIndeedPassword ? <EyeOff size={15} /> : <Eye size={15} />}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                <div className="portal-form-note">
+                  <ShieldCheck size={14} color="#0284c7" style={{ flexShrink: 0, marginTop: '2px' }} />
+                  <span>
+                    <strong>Zero-Password Storage:</strong> Credentials are used exclusively for one-time headless session verification and are never stored on disk.
+                  </span>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={isConnectingIndeedMobile}
+                  className="portal-launch-btn"
+                  style={{ width: '100%', marginTop: '4px' }}
+                >
+                  {isConnectingIndeedMobile ? <Loader2 size={16} className="spin" /> : <Smartphone size={16} />}
+                  <span>{isConnectingIndeedMobile ? 'Connecting to Indeed... Please wait' : 'Connect Indeed via Code'}</span>
+                </button>
+              </form>
+            )}
+          </div>
+        )}
+
+        {/* MODE 2: INDEED LAPTOP BROWSER LOGIN (FALLBACK) */}
+        {indeedMode === 'laptop' && (
+          <div>
+            <div className="portal-session-banner" style={{
+              background: indeedSessionInfo.connected ? 'rgba(16, 185, 129, 0.08)' : 'rgba(245, 158, 11, 0.08)',
+              border: `1px solid ${indeedSessionInfo.connected ? 'rgba(16, 185, 129, 0.25)' : 'rgba(245, 158, 11, 0.25)'}`,
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem', fontWeight: 600, color: indeedSessionInfo.connected ? 'var(--emerald)' : 'var(--amber)' }}>
+                {indeedSessionInfo.connected ? '🟢 Indeed Persistent Browser Session is Active' : '🟡 Indeed Session Not Initialized'}
+              </div>
+              <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                {indeedSessionInfo.connected
+                  ? 'Your authenticated session cookies are stored locally in an isolated directory. The agent can auto-apply to Indeed "Easily Apply" jobs autonomously with zero password prompts.'
+                  : 'Indeed requires a one-time human authentication (email OTP or Google sign-in). Click the button below to launch Chrome on your PC, log into your account once, and save your cookies permanently.'}
+              </p>
+            </div>
+
+            <div className="portal-actions-footer">
+              <button
+                type="button"
+                onClick={handleLaunchIndeedSession}
+                disabled={launchingIndeedSession}
+                className="portal-launch-btn"
+              >
+                {launchingIndeedSession ? <Loader2 size={16} className="spin" /> : <ExternalLink size={16} />}
+                <span>{launchingIndeedSession ? 'Waiting for Login & Confirmation...' : 'Launch One-Time Chrome Login (Indeed)'}</span>
+              </button>
+
+              <span className="portal-path-indicator">
+                Path: <code>backend/data/indeed_session/</code>
+              </span>
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* STEP 4: INTERACTIVE OTP MODAL POPUP */}
+      {/* STEP 4/5: INTERACTIVE OTP / CODE MODAL POPUP (UNIFIED FOR NAUKRI & INDEED) */}
       {otpModalOpen && (
         <div className="portal-otp-overlay">
           <div className="portal-otp-dialog">
-            <div className="portal-otp-icon-wrapper">
+            <div className="portal-otp-icon-wrapper" style={{ background: activePortal === 'indeed' ? 'rgba(2, 132, 199, 0.1)' : 'rgba(234, 88, 12, 0.1)', color: activePortal === 'indeed' ? '#0284c7' : '#ea580c' }}>
               <ShieldCheck size={30} />
             </div>
 
             <div>
-              <h3 className="portal-otp-title">Naukri Verification Code</h3>
+              <h3 className="portal-otp-title">
+                {activePortal === 'indeed' ? 'Indeed Verification Code' : 'Naukri Verification Code'}
+              </h3>
               <p className="portal-otp-subtitle">
-                Enter the 6-digit OTP code sent to your registered mobile phone or WhatsApp to complete your connection.
+                {activePortal === 'indeed'
+                  ? 'Enter the 6-digit verification code sent to your Indeed registered email or phone to complete your connection.'
+                  : 'Enter the 6-digit OTP code sent to your registered mobile phone or WhatsApp to complete your connection.'}
               </p>
             </div>
 
@@ -651,13 +893,12 @@ export default function AccountsSettings({ notify }) {
               <input
                 type="text"
                 value={otpValue}
-                onChange={(e) => setOtpValue(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                onChange={(e) => setOtpValue(e.target.value.replace(/\s+/g, '').slice(0, 8))}
                 placeholder="• • • • • •"
-                maxLength={6}
+                maxLength={8}
                 className="portal-otp-input-field"
                 autoFocus
                 required
-                inputMode="numeric"
               />
 
               <div className="portal-otp-actions">
@@ -667,7 +908,7 @@ export default function AccountsSettings({ notify }) {
                   className="portal-otp-verify-btn"
                 >
                   {isVerifyingOtp ? <Loader2 size={16} className="spin" /> : <CheckCircle2 size={16} />}
-                  <span>{isVerifyingOtp ? 'Verifying OTP... Please wait' : 'Verify & Complete Connection'}</span>
+                  <span>{isVerifyingOtp ? 'Verifying Code... Please wait' : 'Verify & Complete Connection'}</span>
                 </button>
 
                 <button

@@ -58,6 +58,10 @@ from app.schemas.api import (
     NaukriVerifyOtpRequest,
     NaukriCancelSessionRequest,
     NaukriConnectResponse,
+    IndeedMobileConnectRequest,
+    IndeedVerifyOtpRequest,
+    IndeedCancelSessionRequest,
+    IndeedConnectResponse,
 )
 from app.agent.headless_auth import headless_auth_manager
 from app.agent.mailer import (
@@ -1078,6 +1082,50 @@ async def launch_indeed_session():
     except Exception as e:
         logger.error(f"Failed to launch Indeed session login: {e}")
         return {"status": "error", "message": str(e)}
+
+
+@app.post("/api/portals/indeed/connect-mobile", response_model=IndeedConnectResponse, tags=["Portals"])
+async def connect_indeed_mobile(req: IndeedMobileConnectRequest):
+    """
+    Dual-Mode Mobile Portal Connection for Indeed.
+    Initiates a silent background login session for Indeed in a worker thread.
+    Returns status:
+      - 'OTP_REQUIRED': with session_id to prompt mobile user for verification code / OTP.
+      - 'SUCCESS': if user was already logged in or completed directly.
+      - 'ERROR': if credentials or connection failed.
+    """
+    logger.info(f"Mobile Indeed connection requested for identifier: {req.identifier[:4]}***")
+    result = await asyncio.to_thread(
+        headless_auth_manager.start_indeed_login,
+        identifier=req.identifier,
+        password=req.password,
+        use_code_mode=bool(req.use_code),
+    )
+    return IndeedConnectResponse(**result)
+
+
+@app.post("/api/portals/indeed/verify-otp", response_model=IndeedConnectResponse, tags=["Portals"])
+async def verify_indeed_mobile_otp(req: IndeedVerifyOtpRequest):
+    """
+    Dual-Mode Mobile Portal Connection for Indeed.
+    Submits user's verification code / OTP to the active headless browser session.
+    Saves authenticated cookies to permanent storage and completes connection.
+    """
+    logger.info(f"Mobile Indeed OTP/code verification received for session: {req.session_id}")
+    result = await asyncio.to_thread(
+        headless_auth_manager.verify_indeed_otp,
+        session_id=req.session_id,
+        otp=req.verification_code,
+    )
+    return IndeedConnectResponse(**result)
+
+
+@app.post("/api/portals/indeed/cancel-mobile", tags=["Portals"])
+async def cancel_indeed_mobile_session(req: IndeedCancelSessionRequest):
+    """Cancels a pending headless Indeed login session and frees browser resources."""
+    headless_auth_manager._close_session(req.session_id)
+    return {"status": "cancelled", "message": "Indeed login session cancelled successfully."}
+
 
 
 

@@ -49,8 +49,10 @@ def check_portal_login_sync(portal_name: str, page_url: str, cookies: list[dict]
         return False, "No active Naukri candidate session detected."
 
     elif "indeed" in p:
-        has_indeed_auth = any(k in cookie_names for k in ["shoe", "surf", "indeed_rno", "surfc"])
-        if has_indeed_auth and "auth" not in current_url:
+        if "/auth" in current_url:
+            return False, f"Browser is still on Indeed authentication page ({page_url})."
+        has_indeed_auth = any(k in cookie_names for k in ["shoe", "surf", "indeed_rno", "surfc", "SOCK", "PPID", "CTK"]) or "myjobs" in current_url
+        if has_indeed_auth:
             return True, "Indeed authenticated session verified."
         return False, "No active Indeed account login detected."
 

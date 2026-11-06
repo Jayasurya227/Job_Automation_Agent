@@ -281,3 +281,38 @@ class NaukriConnectResponse(BaseModel):
     cookie_count: Optional[int] = Field(default=None)
 
 
+class IndeedMobileConnectRequest(BaseModel):
+    """Payload to initiate headless Indeed connection from mobile or web."""
+    identifier: str = Field(..., description="Email address or phone number")
+    password: Optional[str] = Field(default=None, description="Account password (optional if login code is preferred)")
+    use_code: Optional[bool] = Field(default=False, description="Request email/SMS login code directly without password")
+    user_id: Optional[str] = Field(default=None, description="Optional tenant or user identifier")
+
+
+class IndeedVerifyOtpRequest(BaseModel):
+    """Payload to submit received verification code / OTP to active headless session."""
+    session_id: str = Field(..., description="Active session UUID waiting for code")
+    code: Optional[str] = Field(default=None, description="Verification code received via email or SMS")
+    otp: Optional[str] = Field(default=None, description="Alias for code")
+    user_id: Optional[str] = Field(default=None, description="Optional tenant or user identifier")
+
+    @property
+    def verification_code(self) -> str:
+        return (self.code or self.otp or "").strip()
+
+
+class IndeedCancelSessionRequest(BaseModel):
+    """Payload to cancel an in-progress headless login session."""
+    session_id: str = Field(..., description="Session UUID to cancel")
+
+
+class IndeedConnectResponse(BaseModel):
+    """Response returned by Indeed mobile connection endpoints."""
+    status: str = Field(..., description="'SUCCESS', 'OTP_REQUIRED', or 'ERROR'")
+    message: str = Field(..., description="Human-readable description of current state")
+    session_id: Optional[str] = Field(default=None, description="Active session ID if code is required")
+    portal: str = Field(default="indeed")
+    cookie_count: Optional[int] = Field(default=None)
+
+
+

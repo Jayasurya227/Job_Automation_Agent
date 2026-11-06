@@ -179,9 +179,21 @@ export const api = {
     body: JSON.stringify({ session_id: sessionId }),
   }),
 
-  // Portal Persistent Session (Indeed Safe Login)
+  // Portal Persistent Session (Indeed Safe Login & Mobile OTP)
   getIndeedSessionStatus: () => request('/api/portals/indeed/session-status'),
   launchIndeedSession: () => request('/api/portals/indeed/launch-session', { method: 'POST' }),
+  connectIndeedMobile: (data) => request('/api/portals/indeed/connect-mobile', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  }),
+  verifyIndeedMobileOtp: (data) => request('/api/portals/indeed/verify-otp', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  }),
+  cancelIndeedMobileSession: (sessionId) => request('/api/portals/indeed/cancel-mobile', {
+    method: 'POST',
+    body: JSON.stringify({ session_id: sessionId }),
+  }),
 
   // Sub-Phase 5.1: Server-Sent Events (SSE) Real-Time Subscription
   subscribeToEvents: (topic = 'all', onEvent, onError) => {

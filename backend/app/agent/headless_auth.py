@@ -60,9 +60,11 @@ class HeadlessAuthManager:
     across Windows asyncio environments.
     """
 
-    def __init__(self, session_dir: Optional[Path] = None):
+    def __init__(self, session_dir: Optional[Path] = None, indeed_session_dir: Optional[Path] = None):
         self.session_dir = Path(session_dir or DEFAULT_SESSION_DIR)
         self.session_dir.mkdir(parents=True, exist_ok=True)
+        self.indeed_session_dir = Path(indeed_session_dir or (DATA_DIR / "indeed_session"))
+        self.indeed_session_dir.mkdir(parents=True, exist_ok=True)
         self._active_sessions: Dict[str, PendingAuthSession] = {}
 
     def cleanup_expired_sessions(self) -> None:
@@ -436,12 +438,14 @@ class HeadlessAuthManager:
             logger.error(f"Error during OTP verification: {e}")
             return {"status": "ERROR", "message": f"Verification error: {str(e)}"}
 
-    def _save_session_marker(self, page: Page, cookies: list[dict]) -> None:
-        """Saves session_verified.json into session_dir."""
-        marker_file = self.session_dir / "session_verified.json"
+    def _save_session_marker(self, page: Page, cookies: list[dict], portal: str = "Naukri") -> None:
+        """Saves session_verified.json into respective session_dir."""
+        target_dir = self.indeed_session_dir if portal.lower() == "indeed" else self.session_dir
+        target_dir.mkdir(parents=True, exist_ok=True)
+        marker_file = target_dir / "session_verified.json"
         try:
             marker_file.write_text(json.dumps({
-                "portal": "Naukri",
+                "portal": portal,
                 "connected": True,
                 "verified_at": datetime.now(timezone.utc).isoformat(),
                 "cookie_count": len(cookies),
@@ -450,6 +454,340 @@ class HeadlessAuthManager:
             }, indent=2), encoding="utf-8")
         except Exception as e:
             logger.debug(f"Notice saving session marker: {e}")
+
+    def start_indeed_login(
+        self,
+        identifier: str,
+        password: Optional[str] = None,
+        use_code_mode: bool = False,
+        custom_session_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Initiates headless Indeed login with anti-bot stealth parameters.
+        Supports both email/password (with potential 2FA code) and direct email/SMS login code.
+        Returns:
+            - {"status": "SUCCESS", "message": ...} if already authenticated or completed directly
+            - {"status": "OTP_REQUIRED", "session_id": ..., "message": ...} if verification code / 2FA requested
+            - {"status": "ERROR", "message": ...} if error occurred
+        """
+        self.cleanup_expired_sessions()
+        session_id = custom_session_id or str(uuid.uuid4())
+        sanitize_session_preferences(self.indeed_session_dir)
+
+        p = None
+        context = None
+        try:
+            p = sync_playwright().start()
+            launch_args = list(get_stealth_chromium_args())
+            launch_args.extend(["--no-first-run", "--no-default-browser-check"])
+
+            launch_kwargs = {
+                "user_data_dir": str(self.indeed_session_dir),
+                "headless": True,
+                "args": launch_args,
+                "user_agent": DEFAULT_USER_AGENT,
+                "viewport": {"width": 1280, "height": 800},
+                "locale": "en-US",
+                "timezone_id": "Asia/Kolkata",
+                "ignore_https_errors": True,
+            }
+
+            for ch in ["chrome", "msedge", None]:
+                try:
+                    kw = dict(launch_kwargs)
+                    if ch:
+                        kw["channel"] = ch
+                    context = p.chromium.launch_persistent_context(**kw)
+                    break
+                except Exception as e:
+                    logger.debug(f"Could not launch channel={ch}: {e}")
+
+            if not context:
+                context = p.chromium.launch_persistent_context(**launch_kwargs)
+
+            context.add_init_script(build_stealth_js())
+            page = context.pages[0] if context.pages else context.new_page()
+
+            logger.info("Navigating to https://secure.indeed.com/auth ...")
+            try:
+                page.goto("https://secure.indeed.com/auth", wait_until="domcontentloaded", timeout=45000)
+            except Exception as nav_e:
+                logger.debug(f"Nav notice (trying in.indeed.com/account/login): {nav_e}")
+                page.goto("https://in.indeed.com/account/login", wait_until="domcontentloaded", timeout=45000)
+            time.sleep(2)
+
+            # Check if user is already logged in with existing session
+            cookies = context.cookies()
+            is_logged_in, _ = check_portal_login_sync("Indeed", page.url, cookies) if "/auth" not in page.url else (False, "")
+            if is_logged_in:
+                self._save_session_marker(page, cookies, portal="Indeed")
+                context.close()
+                p.stop()
+                return {
+                    "status": "SUCCESS",
+                    "message": "Already authenticated into Indeed candidate session.",
+                    "portal": "indeed",
+                }
+
+            # Locate identifier field (email or phone)
+            email_selectors = [
+                "input[name='__email']",
+                "input[type='email']",
+                "input#ifl-InputFormField-3",
+                "input[name='identifier']",
+                "input[id*='email' i]",
+                "input[type='text']",
+            ]
+            identifier_input = None
+            for sel in email_selectors:
+                el = page.query_selector(sel)
+                if el and el.is_visible():
+                    identifier_input = el
+                    break
+
+            if not identifier_input:
+                # Might need to click "Sign in" first if on home page
+                sign_in_btn = page.query_selector("a:has-text('Sign in'), button:has-text('Sign in')")
+                if sign_in_btn:
+                    sign_in_btn.click()
+                    time.sleep(2)
+                    for sel in email_selectors:
+                        el = page.query_selector(sel)
+                        if el and el.is_visible():
+                            identifier_input = el
+                            break
+
+            if not identifier_input:
+                context.close()
+                p.stop()
+                return {"status": "ERROR", "message": "Could not locate Indeed login input field."}
+
+            identifier_input.click()
+            time.sleep(0.2)
+            identifier_input.fill("")
+            for c in identifier:
+                identifier_input.type(c, delay=random.uniform(25, 75))
+            time.sleep(0.4)
+
+            # Click Continue / Submit
+            continue_selectors = [
+                "button[type='submit']",
+                "button:has-text('Continue')",
+                "button:has-text('Next')",
+                "button#login-submit-button",
+            ]
+            for csel in continue_selectors:
+                cbtn = page.query_selector(csel)
+                if cbtn and cbtn.is_visible():
+                    cbtn.click()
+                    logger.info(f"Clicked Indeed Continue button ({csel})")
+                    break
+
+            time.sleep(2.5)
+
+            # Check if Password field is presented
+            password_input = page.query_selector("input[type='password'], input[name='__password']")
+            if password_input and password and not use_code_mode:
+                logger.info("Entering Indeed password...")
+                password_input.click()
+                time.sleep(0.2)
+                password_input.fill("")
+                for c in password:
+                    password_input.type(c, delay=random.uniform(25, 75))
+                time.sleep(0.4)
+
+                submit_btn = page.query_selector("button[type='submit'], button:has-text('Sign in'), button:has-text('Log in')")
+                if submit_btn:
+                    submit_btn.click()
+                time.sleep(2.5)
+
+            elif use_code_mode or not password:
+                # If password input exists but user requested code login, click "Sign in with login code" if present
+                code_opt = page.query_selector(
+                    "button:has-text('login code' i), a:has-text('login code' i), "
+                    "button:has-text('Send a code' i), a:has-text('Send a code' i), "
+                    "button:has-text('Email a code' i), a:has-text('Email a code' i)"
+                )
+                if code_opt:
+                    code_opt.click()
+                    time.sleep(2)
+
+            # Check if direct login succeeded (redirected to home/dashboard)
+            for _ in range(6):
+                curr_url = page.url.lower()
+                cookies = context.cookies()
+                auth_ok, _ = check_portal_login_sync("Indeed", curr_url, cookies)
+                if auth_ok:
+                    self._save_session_marker(page, cookies, portal="Indeed")
+                    context.close()
+                    p.stop()
+                    return {
+                        "status": "SUCCESS",
+                        "message": "Successfully logged into Indeed candidate profile!",
+                        "portal": "indeed",
+                    }
+                time.sleep(1)
+
+            # Check for error message
+            err_el = page.query_selector(".error-message, [class*='error' i], [data-testid*='error' i]")
+            if err_el and err_el.is_visible():
+                err_text = err_el.inner_text().strip()
+                if err_text and ("password" in err_text.lower() or "invalid" in err_text.lower() or "not recognized" in err_text.lower()):
+                    context.close()
+                    p.stop()
+                    return {"status": "ERROR", "message": f"Indeed Login Failed: {err_text}"}
+
+            # Verification code challenge active: retain session
+            logger.info("Indeed verification code prompt active. Keeping session alive for user code.")
+            self._active_sessions[session_id] = PendingAuthSession(
+                session_id=session_id,
+                portal="indeed",
+                identifier=identifier,
+                playwright=p,
+                context=context,
+                page=page,
+                created_at=time.time(),
+            )
+            return {
+                "status": "OTP_REQUIRED",
+                "session_id": session_id,
+                "portal": "indeed",
+                "message": f"Indeed verification code requested. Please enter the 6-digit code sent to {identifier}.",
+            }
+
+        except Exception as e:
+            logger.error(f"Error starting headless Indeed login: {e}")
+            if context:
+                try:
+                    context.close()
+                except Exception:
+                    pass
+            if p:
+                try:
+                    p.stop()
+                except Exception:
+                    pass
+            return {"status": "ERROR", "message": f"Indeed headless login error: {str(e)}"}
+
+    def verify_indeed_otp(self, session_id: str, otp: str) -> Dict[str, Any]:
+        """
+        Submits the verification code to the active headless Indeed browser session.
+        Completes authentication and saves verified cookies to backend/data/indeed_session/.
+        """
+        clean_code = otp.strip().replace(" ", "").replace("-", "")
+        if not clean_code or len(clean_code) < 4:
+            return {"status": "ERROR", "message": "Invalid code format. Please enter a valid verification code."}
+
+        session = self._active_sessions.get(session_id)
+        if not session:
+            return {
+                "status": "ERROR",
+                "message": "Login session expired or not found. Please click Connect to request a fresh code.",
+            }
+
+        page = session.page
+        context = session.context
+        p = session.playwright
+
+        try:
+            logger.info(f"Entering Indeed verification code for session {session_id}...")
+
+            # Selectors for Indeed verification code
+            code_selectors = [
+                "input[data-testid='verification-code-input']",
+                "input[name='verificationCode']",
+                "input#code",
+                "input[placeholder*='code' i]",
+                "input[placeholder*='OTP' i]",
+                "input[type='tel']",
+                "input[type='number']",
+                "input[maxlength='6']",
+                "input[type='text']",
+            ]
+
+            code_input = None
+            for sel in code_selectors:
+                el = page.query_selector(sel)
+                if el and el.is_visible():
+                    code_input = el
+                    break
+
+            # Multi-digit separate inputs check
+            digit_inputs = page.query_selector_all("input[data-testid*='otp-input'], [class*='code-box'] input, [class*='digit'] input")
+            if len(digit_inputs) == 6 and len(clean_code) == 6:
+                for idx, digit in enumerate(clean_code):
+                    digit_inputs[idx].click()
+                    digit_inputs[idx].fill(digit)
+                    time.sleep(0.08)
+            elif code_input:
+                code_input.click()
+                code_input.fill("")
+                for c in clean_code:
+                    code_input.type(c, delay=random.uniform(30, 80))
+            else:
+                page.keyboard.type(clean_code, delay=50)
+
+            time.sleep(0.5)
+
+            # Click Submit / Verify
+            verify_btn_selectors = [
+                "button[type='submit']",
+                "button:has-text('Verify')",
+                "button:has-text('Sign in')",
+                "button:has-text('Continue')",
+                "button:has-text('Submit')",
+            ]
+            for btn_sel in verify_btn_selectors:
+                btn = page.query_selector(btn_sel)
+                if btn and btn.is_visible():
+                    btn.click()
+                    logger.info(f"Clicked Indeed code submit button ({btn_sel})")
+                    break
+
+            # Poll for session cookies & redirect
+            for _ in range(12):
+                time.sleep(1)
+                cookies = context.cookies()
+                auth_ok, auth_reason = check_portal_login_sync("Indeed", page.url, cookies)
+                if auth_ok:
+                    self._save_session_marker(page, cookies, portal="Indeed")
+                    logger.info(f"✅ Indeed code verified successfully for {session.identifier}!")
+                    self._close_session(session_id)
+                    return {
+                        "status": "SUCCESS",
+                        "message": "Indeed account successfully connected and verified via Mobile Code!",
+                        "portal": "indeed",
+                        "cookie_count": len(cookies),
+                    }
+
+                # Check for invalid code error
+                err_el = page.query_selector(".error-message, [class*='error' i], text='Invalid code', text='Incorrect code', text='Code expired'")
+                if err_el and err_el.is_visible():
+                    err_msg = err_el.inner_text().strip()
+                    if err_msg and any(w in err_msg.lower() for w in ["code", "invalid", "incorrect", "expired"]):
+                        return {"status": "ERROR", "message": f"Verification failed: {err_msg}"}
+
+            # Final check before timeout
+            cookies = context.cookies()
+            auth_ok, auth_reason = check_portal_login_sync("Indeed", page.url, cookies)
+            if auth_ok:
+                self._save_session_marker(page, cookies, portal="Indeed")
+                self._close_session(session_id)
+                return {
+                    "status": "SUCCESS",
+                    "message": "Indeed account successfully connected!",
+                    "portal": "indeed",
+                    "cookie_count": len(cookies),
+                }
+
+            return {
+                "status": "ERROR",
+                "message": f"Indeed verification timed out. (Status: {auth_reason})",
+            }
+
+        except Exception as e:
+            logger.error(f"Error during Indeed code verification: {e}")
+            return {"status": "ERROR", "message": f"Verification error: {str(e)}"}
 
 
 # Singleton engine instance
