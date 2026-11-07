@@ -16,8 +16,7 @@ import {
 } from 'lucide-react';
 
 const AVAILABLE_PORTALS = [
-  { id: 'naukri', label: 'Naukri.com', icon: '🇮🇳', desc: 'Top Indian tech portal (Direct 1-Click Apply)' },
-  { id: 'indeed', label: 'Indeed', icon: '🌐', desc: 'Global & Indian listings (Easily Apply)' },
+  { id: 'naukri', label: 'Naukri.com', icon: '🇮🇳', desc: "India's #1 Tech Job Portal (Direct 1-Click Apply)" },
 ];
 
 export default function DiscoveryModal({ isOpen, onClose, profile, onDiscoveryComplete, addToast }) {

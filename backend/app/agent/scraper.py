@@ -761,7 +761,7 @@ async def discover_jobs(
     else:
         locs_to_search = locs_to_search[:2]
 
-    portal_list = portals or ["naukri", "indeed"]
+    portal_list = portals or ["naukri"]
     effective_freshness = freshness_days if freshness_days is not None else saved_freshness
 
     # Generate balanced search pairs (e.g. (Role, Location)) capped to top 2 queries for high speed

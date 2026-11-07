@@ -54,6 +54,7 @@ export default function App() {
   const [toasts, setToasts] = useState([]);
   const [naukriSession, setNaukriSession] = useState(null);
   const [indeedSession, setIndeedSession] = useState(null);
+  const [autopilotStatus, setAutopilotStatus] = useState(null);
   const [applyingJobId, setApplyingJobId] = useState(null);
 
   // Hourly Auto-Discovery State (9:00 AM – 9:00 PM)
@@ -120,14 +121,15 @@ export default function App() {
         return;
       }
 
-      // 2. Fetch jobs, metrics, profile & session status using Promise.allSettled
+      // 2. Fetch jobs, metrics, profile, session status & autopilot status using Promise.allSettled
       // Prevents a single dropped/delayed fetch on mobile networks from falsely marking the entire backend offline
-      const [jobsRes, metricsRes, profileRes, naukriRes, indeedRes] = await Promise.allSettled([
+      const [jobsRes, metricsRes, profileRes, naukriRes, indeedRes, autopilotRes] = await Promise.allSettled([
         api.getJobs(),
         api.getMetrics(),
         api.getProfile(),
         api.getNaukriSessionStatus(),
         api.getIndeedSessionStatus(),
+        api.getAutopilotStatus(),
       ]);
 
       if (jobsRes.status === 'fulfilled' && jobsRes.value) {
@@ -145,6 +147,9 @@ export default function App() {
       if (indeedRes.status === 'fulfilled' && indeedRes.value) {
         setIndeedSession(indeedRes.value);
       }
+      if (autopilotRes.status === 'fulfilled' && autopilotRes.value) {
+        setAutopilotStatus(autopilotRes.value);
+      }
       setBackendStatus('online');
     } catch (err) {
       console.error('Data sync failed:', err);
@@ -153,18 +158,28 @@ export default function App() {
     }
   }, []);
 
-  // Sync sessions whenever returning to Pipeline tab
+  // Sync sessions & timetable status whenever returning to Pipeline tab
   useEffect(() => {
     if (activeTab === 'pipeline') {
       Promise.allSettled([
         api.getNaukriSessionStatus(),
-        api.getIndeedSessionStatus(),
-      ]).then(([naukriRes, indeedRes]) => {
+        api.getAutopilotStatus(),
+      ]).then(([naukriRes, autoRes]) => {
         if (naukriRes.status === 'fulfilled' && naukriRes.value) setNaukriSession(naukriRes.value);
-        if (indeedRes.status === 'fulfilled' && indeedRes.value) setIndeedSession(indeedRes.value);
+        if (autoRes.status === 'fulfilled' && autoRes.value) setAutopilotStatus(autoRes.value);
       });
     }
   }, [activeTab]);
+
+  // Periodic heartbeat tick to update timetable countdown and status
+  useEffect(() => {
+    const timer = setInterval(() => {
+      api.getAutopilotStatus().then(res => {
+        if (res) setAutopilotStatus(res);
+      }).catch(() => {});
+    }, 20000);
+    return () => clearInterval(timer);
+  }, []);
 
   // Dynamic Navigation Handler to redirect to Portal Accounts settings
   const handleRedirectToPortalSettings = useCallback(() => {
@@ -191,19 +206,18 @@ export default function App() {
     const freshness = profile?.preferences?.freshness_days ?? 1;
     const minScore = profile?.preferences?.min_match_score ?? 70;
 
-    // 9-Hour Round-Robin Timeline: Even hours -> Naukri, Odd hours -> Indeed
-    const currentHour = new Date().getHours();
-    const scheduledPortal = (currentHour % 2 === 0) ? 'naukri' : 'indeed';
-    const scheduledPortalLabel = scheduledPortal === 'naukri' ? 'Naukri.com' : 'Indeed';
+    // 100% Naukri Auto-Pilot Engine
+    const scheduledPortal = 'naukri';
+    const scheduledPortalLabel = 'Naukri.com';
 
     setIsDiscovering(true);
     const rolesLabel = rolesToSearch.join(', ');
     const locsLabel = locsToSearch.join(', ');
 
     if (isAutoTrigger) {
-      notify(`⏰ Hourly Auto-Discovery: Agent is crawling fresh 24h jobs on scheduled portal: ${scheduledPortalLabel} (${rolesLabel} in ${locsLabel})...`, 'info');
+      notify(`⏰ Scheduled Auto-Discovery: Agent is crawling fresh 24h jobs on ${scheduledPortalLabel} (${rolesLabel} in ${locsLabel})...`, 'info');
     } else {
-      notify(`🚀 Agent launched! Crawling fresh 24h jobs on scheduled portal: ${scheduledPortalLabel} across [${rolesLabel}] in [${locsLabel}]...`, 'info');
+      notify(`🚀 Agent launched! Crawling fresh 24h jobs on ${scheduledPortalLabel} across [${rolesLabel}] in [${locsLabel}]...`, 'info');
     }
 
     try {
@@ -471,88 +485,113 @@ export default function App() {
         {/* TAB 1: PIPELINE BOARD */}
         {activeTab === 'pipeline' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-            {/* Live Dynamic Multi-Portal Session Warning Banner (Only on Lost Connection / Expired) */}
+            {/* 1. Live Naukri Session Warning Banner (Strictly Shown ONLY on Expired or Not Connected) */}
             {(() => {
-              const hasAnyConnection = Boolean(naukriSession?.connected || indeedSession?.connected);
-              const naukriExpired = Boolean(naukriSession?.expired);
-              const indeedExpired = Boolean(indeedSession?.expired);
-
-              // 1. If at least one portal is successfully connected and neither has lost connection, NO WARNING!
-              if (hasAnyConnection && !naukriExpired && !indeedExpired) {
+              if (naukriSession?.connected && !naukriSession?.expired) {
                 return null;
               }
+              const isExpired = Boolean(naukriSession?.expired);
+              const title = isExpired ? 'Naukri Connection Lost (Expired)' : 'Naukri Account Not Connected';
+              const desc = isExpired 
+                ? `Your Naukri session has expired (${naukriSession?.age_days || 0}d old). Re-connect via Mobile OTP in Settings.`
+                : 'Connect your registered mobile number via SMS OTP in Settings to start autonomous Naukri job applications.';
+              const btnText = isExpired ? 'Re-connect Naukri (OTP)' : 'Connect Naukri (OTP)';
 
-              // 2. Alert ONLY when an established connection has been LOST (session expired)
-              if (naukriExpired || indeedExpired) {
-                let title = '';
-                let desc = '';
-                let btnText = '';
+              return (
+                <div className="naukri-session-warning-card">
+                  <div className="session-warning-left">
+                    <div className="session-warning-icon">
+                      <AlertTriangle size={15} color="#b45309" />
+                    </div>
+                    <div className="session-warning-text">
+                      <strong>{title}:</strong>{' '}
+                      <span>{desc}</span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="session-reconnect-btn"
+                    onClick={handleRedirectToPortalSettings}
+                    title="Go to Settings > Portal Accounts"
+                  >
+                    <span>{btnText}</span>
+                    <ExternalLink size={12} />
+                  </button>
+                </div>
+              );
+            })()}
 
-                if (naukriExpired && indeedExpired) {
-                  title = 'Portal Connections Lost (Expired)';
-                  desc = 'Both Naukri and Indeed sessions have expired. Please re-authenticate in Settings.';
-                  btnText = 'Re-authenticate Portals';
-                } else if (naukriExpired) {
-                  title = 'Naukri Connection Lost (Expired)';
-                  desc = `Your Naukri session has expired (${naukriSession?.age_days || 0}d old). Re-connect via Mobile OTP in Settings.`;
-                  btnText = 'Re-connect Naukri (OTP)';
-                } else {
-                  title = 'Indeed Connection Lost (Expired)';
-                  desc = `Your Indeed session has expired (${indeedSession?.age_days || 0}d old). Re-connect in Settings.`;
-                  btnText = 'Re-connect Indeed';
-                }
+            {/* 2. Live Timetable Status Banner (100% Naukri: 1-Hour Work + 30-Min Rest Cadence) */}
+            {(() => {
+              const timeline = autopilotStatus?.timeline;
+              if (!timeline) return null;
 
-                return (
-                  <div className="naukri-session-warning-card">
-                    <div className="session-warning-left">
-                      <div className="session-warning-icon">
-                        <AlertTriangle size={15} color="#b45309" />
+              const phase = timeline.phase || 'closed';
+              const isWork = phase === 'work';
+              const isBreak = phase === 'break';
+
+              return (
+                <div className="glass-panel" style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  flexWrap: 'wrap',
+                  gap: '12px',
+                  padding: '12px 18px',
+                  borderRadius: '10px',
+                  background: isWork 
+                    ? 'rgba(16, 185, 129, 0.08)' 
+                    : (isBreak ? 'rgba(245, 158, 11, 0.08)' : 'rgba(100, 116, 139, 0.08)'),
+                  border: `1.5px solid ${isWork ? 'rgba(16, 185, 129, 0.28)' : (isBreak ? 'rgba(245, 158, 11, 0.28)' : 'rgba(100, 116, 139, 0.28)')}`,
+                  boxShadow: 'var(--shadow-sm)'
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <span style={{ fontSize: '1.35rem', lineHeight: 1 }}>
+                      {isWork ? '🚀' : (isBreak ? '💤' : '🌙')}
+                    </span>
+                    <div>
+                      <div style={{
+                        fontSize: '0.88rem',
+                        fontWeight: 700,
+                        color: isWork ? 'var(--emerald)' : (isBreak ? 'var(--amber)' : 'var(--text-muted)'),
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px'
+                      }}>
+                        <span>{timeline.status_message}</span>
+                        {isWork && (
+                          <span style={{
+                            display: 'inline-block',
+                            width: '8px',
+                            height: '8px',
+                            borderRadius: '50%',
+                            background: '#10b981',
+                            boxShadow: '0 0 8px rgba(16, 185, 129, 0.8)'
+                          }} />
+                        )}
                       </div>
-                      <div className="session-warning-text">
-                        <strong>{title}:</strong>{' '}
-                        <span>{desc}</span>
+                      <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                        100% Naukri.com Engine • Current Slot: <strong>{timeline.slot_label}</strong> • Next: <strong>{timeline.next_event_label}</strong>
                       </div>
                     </div>
-                    <button
-                      type="button"
-                      className="session-reconnect-btn"
-                      onClick={handleRedirectToPortalSettings}
-                      title="Go to Settings > Portal Accounts"
-                    >
-                      <span>{btnText}</span>
-                      <ExternalLink size={12} />
-                    </button>
                   </div>
-                );
-              }
 
-              // 3. Initial fresh state only when ZERO portals are connected at all
-              if (!hasAnyConnection && naukriSession && indeedSession) {
-                return (
-                  <div className="naukri-session-warning-card">
-                    <div className="session-warning-left">
-                      <div className="session-warning-icon">
-                        <AlertTriangle size={15} color="#b45309" />
-                      </div>
-                      <div className="session-warning-text">
-                        <strong>No Job Portals Connected:</strong>{' '}
-                        <span>Connect Naukri (via Mobile OTP) or Indeed in Settings to start autonomous job applications.</span>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      className="session-reconnect-btn"
-                      onClick={handleRedirectToPortalSettings}
-                      title="Go to Settings > Portal Accounts"
-                    >
-                      <span>Connect a Portal</span>
-                      <ExternalLink size={12} />
-                    </button>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{
+                      fontSize: '0.76rem',
+                      padding: '4px 12px',
+                      borderRadius: '20px',
+                      fontWeight: 700,
+                      background: isWork ? 'rgba(16, 185, 129, 0.16)' : (isBreak ? 'rgba(245, 158, 11, 0.16)' : 'rgba(100, 116, 139, 0.16)'),
+                      color: isWork ? '#059669' : (isBreak ? '#d97706' : 'var(--text-muted)')
+                    }}>
+                      {isWork 
+                        ? `Work Slot ${timeline.slot_id}/8 (${timeline.remaining_minutes}m left)` 
+                        : (isBreak ? `Rest Break ${timeline.slot_id}/8 (${timeline.remaining_minutes}m left)` : 'Standby until 9:00 AM')}
+                    </span>
                   </div>
-                );
-              }
-
-              return null;
+                </div>
+              );
             })()}
 
             {/* Pipeline Controls Bar */}

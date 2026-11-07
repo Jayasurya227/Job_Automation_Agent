@@ -24,58 +24,101 @@ logger = logging.getLogger("agent.scheduler")
 
 OFFICE_START_HOUR = 9   # 9:00 AM
 OFFICE_END_HOUR = 21    # 9:00 PM (21:00)
-PERIODIC_INTERVAL_SECONDS = 3600  # 1 hour between periodic daytime crawls
+
+TIMETABLE_SLOTS = [
+    {"start": 540, "end": 600, "phase": "work", "slot_id": 1, "time_label": "09:00 AM – 10:00 AM", "name": "Work Slot 1"},
+    {"start": 600, "end": 630, "phase": "break", "slot_id": 1, "time_label": "10:00 AM – 10:30 AM", "name": "Rest Break 1"},
+    {"start": 630, "end": 690, "phase": "work", "slot_id": 2, "time_label": "10:30 AM – 11:30 AM", "name": "Work Slot 2"},
+    {"start": 690, "end": 720, "phase": "break", "slot_id": 2, "time_label": "11:30 AM – 12:00 PM", "name": "Rest Break 2"},
+    {"start": 720, "end": 780, "phase": "work", "slot_id": 3, "time_label": "12:00 PM – 01:00 PM", "name": "Work Slot 3"},
+    {"start": 780, "end": 810, "phase": "break", "slot_id": 3, "time_label": "01:00 PM – 01:30 PM", "name": "Rest Break 3"},
+    {"start": 810, "end": 870, "phase": "work", "slot_id": 4, "time_label": "01:30 PM – 02:30 PM", "name": "Work Slot 4"},
+    {"start": 870, "end": 900, "phase": "break", "slot_id": 4, "time_label": "02:30 PM – 03:00 PM", "name": "Rest Break 4"},
+    {"start": 900, "end": 960, "phase": "work", "slot_id": 5, "time_label": "03:00 PM – 04:00 PM", "name": "Work Slot 5"},
+    {"start": 960, "end": 990, "phase": "break", "slot_id": 5, "time_label": "04:00 PM – 04:30 PM", "name": "Rest Break 5"},
+    {"start": 990, "end": 1050, "phase": "work", "slot_id": 6, "time_label": "04:30 PM – 05:30 PM", "name": "Work Slot 6"},
+    {"start": 1050, "end": 1080, "phase": "break", "slot_id": 6, "time_label": "05:30 PM – 06:00 PM", "name": "Rest Break 6"},
+    {"start": 1080, "end": 1140, "phase": "work", "slot_id": 7, "time_label": "06:00 PM – 07:00 PM", "name": "Work Slot 7"},
+    {"start": 1140, "end": 1170, "phase": "break", "slot_id": 7, "time_label": "07:00 PM – 07:30 PM", "name": "Rest Break 7"},
+    {"start": 1170, "end": 1230, "phase": "work", "slot_id": 8, "time_label": "07:30 PM – 08:30 PM", "name": "Work Slot 8"},
+    {"start": 1230, "end": 1260, "phase": "break", "slot_id": 8, "time_label": "08:30 PM – 09:00 PM", "name": "Rest Break 8"},
+]
 
 
 def get_portal_timeline_slot(dt: Optional[datetime] = None) -> Dict[str, Any]:
     """
-    Resolves the single active portal for the 12-Hour Round-Robin hourly rotation.
-    Active Window: 9:00 AM – 9:00 PM (09:00 to 21:00 IST).
-    Rotates strictly between Naukri and Indeed by hour:
-       9:00 AM – 10:00 AM: Naukri
-      10:00 AM – 11:00 AM: Indeed
-      11:00 AM – 12:00 PM: Naukri
-      12:00 PM –  1:00 PM: Indeed
-       1:00 PM –  2:00 PM: Naukri
-       2:00 PM –  3:00 PM: Indeed
-       3:00 PM –  4:00 PM: Naukri
-       4:00 PM –  5:00 PM: Indeed
-       5:00 PM –  6:00 PM: Naukri
-       6:00 PM –  7:00 PM: Indeed
-       7:00 PM –  8:00 PM: Naukri
-       8:00 PM –  9:00 PM: Indeed
+    Resolves the exact 1-Hour Work + 30-Minute Break timetable slot for Naukri.
+    Active Office Window: 9:00 AM – 9:00 PM IST (09:00 to 21:00).
+    Cycle:
+       Slot 1: 09:00 – 10:00 (Work)  -> 10:00 – 10:30 (Rest Break)
+       Slot 2: 10:30 – 11:30 (Work)  -> 11:30 – 12:00 (Rest Break)
+       Slot 3: 12:00 – 01:00 (Work)  -> 01:00 – 01:30 (Rest Break)
+       Slot 4: 01:30 – 02:30 (Work)  -> 02:30 – 03:00 (Rest Break)
+       Slot 5: 03:00 – 04:00 (Work)  -> 04:00 – 04:30 (Rest Break)
+       Slot 6: 04:30 – 05:30 (Work)  -> 05:30 – 06:00 (Rest Break)
+       Slot 7: 06:00 – 07:00 (Work)  -> 07:00 – 07:30 (Rest Break)
+       Slot 8: 07:30 – 08:30 (Work)  -> 08:30 – 09:00 (Rest Break)
+       Night:  09:00 PM – 09:00 AM (Closed / Cooldown)
     """
     now = dt or datetime.now()
-    hour = now.hour
-    is_office_hours = (OFFICE_START_HOUR <= hour < OFFICE_END_HOUR)
+    current_minutes = now.hour * 60 + now.minute
+    current_seconds = now.second
 
-    # 12-hour rotation starting at OFFICE_START_HOUR: Even offsets -> Naukri, Odd offsets -> Indeed
-    if (hour - OFFICE_START_HOUR) % 2 == 0:
-        current_portal = "naukri"
-        next_portal = "indeed"
+    if current_minutes < 540 or current_minutes >= 1260:
+        is_office_hours = False
+        phase = "closed"
+        if current_minutes >= 1260:
+            minutes_until_9am = (24 * 60 - current_minutes) + 540
+        else:
+            minutes_until_9am = 540 - current_minutes
+        remaining_seconds = minutes_until_9am * 60 - current_seconds
+        remaining_minutes = max(1, round(remaining_seconds / 60))
+        status_message = "🌙 Office Hours Closed (Resumes tomorrow at 9:00 AM)"
+        slot_label = "Night Cooldown (Closed)"
+        next_event_label = "Work Slot 1 at 09:00 AM"
+        active_slot_id = 0
     else:
-        current_portal = "indeed"
-        next_portal = "naukri"
+        is_office_hours = True
+        current_slot = None
+        next_slot = None
+        for idx, slot in enumerate(TIMETABLE_SLOTS):
+            if slot["start"] <= current_minutes < slot["end"]:
+                current_slot = slot
+                next_slot = TIMETABLE_SLOTS[idx + 1] if idx + 1 < len(TIMETABLE_SLOTS) else None
+                break
 
-    def format_hour(h: int) -> str:
-        period = "AM" if h < 12 else "PM"
-        disp = h if (0 < h <= 12) else (h - 12 if h > 12 else 12)
-        return f"{disp}:00 {period}"
+        if current_slot is None:
+            current_slot = TIMETABLE_SLOTS[0]
 
-    slot_start = format_hour(hour)
-    slot_end = format_hour((hour + 1) % 24)
-    next_slot_end = format_hour((hour + 2) % 24)
+        phase = current_slot["phase"]
+        active_slot_id = current_slot["slot_id"]
+        slot_label = current_slot["time_label"]
+        remaining_minutes = current_slot["end"] - current_minutes
+        remaining_seconds = remaining_minutes * 60 - current_seconds
+
+        if phase == "work":
+            next_time = next_slot["time_label"].split("–")[0].strip() if next_slot else "10:00 AM"
+            status_message = "🚀 Agent Active: Searching fresh Naukri jobs..."
+            next_event_label = f"Rest Break at {next_time} (in {remaining_minutes}m)"
+        else:
+            next_time = next_slot["time_label"].split("–")[0].strip() if next_slot else "09:00 AM"
+            status_message = f"💤 Agent Resting (Next scan at {next_time} • in {remaining_minutes}m)"
+            next_event_label = f"Next search at {next_time} (in {remaining_minutes}m)"
 
     return {
-        "current_portal": current_portal,
-        "portal_label": "Naukri.com" if current_portal == "naukri" else "Indeed",
-        "slot_label": f"{slot_start} – {slot_end}",
-        "next_portal": next_portal,
-        "next_portal_label": "Naukri.com" if next_portal == "naukri" else "Indeed",
-        "next_slot_label": f"{slot_end} – {next_slot_end}",
+        "current_portal": "naukri",
+        "portal_label": "Naukri.com",
+        "phase": phase,  # "work" | "break" | "closed"
+        "is_work_phase": (phase == "work"),
         "is_office_hours": is_office_hours,
+        "slot_id": active_slot_id,
+        "slot_label": slot_label,
+        "status_message": status_message,
+        "next_event_label": next_event_label,
+        "remaining_minutes": remaining_minutes,
+        "remaining_seconds": max(0, remaining_seconds),
         "active_window": "9:00 AM – 9:00 PM IST",
-        "hour": hour
+        "timetable_pattern": "1 Hour Work + 30 Min Break",
     }
 
 
@@ -92,6 +135,7 @@ class AutoPilotScheduler:
         self._execution_lock: Optional[asyncio.Lock] = None
         self._last_execution_timestamp: float = 0.0
         self._last_scheduled_hour: Optional[int] = None
+        self._last_executed_slot_id: Optional[int] = None
         self._last_enabled_state: Optional[bool] = None
         self._was_active_in_office_hours: bool = False
         self._wake_event: Optional[asyncio.Event] = None
@@ -346,8 +390,10 @@ class AutoPilotScheduler:
                 enabled = getattr(prefs, 'autopilot_enabled', False)
                 now = datetime.now()
 
-                # Office hours window: 9:00 AM to 9:00 PM (21:00)
-                is_office_hours = (OFFICE_START_HOUR <= now.hour < OFFICE_END_HOUR)
+                timeline_info = get_portal_timeline_slot(now)
+                is_office_hours = timeline_info["is_office_hours"]
+                phase = timeline_info["phase"]
+                slot_id = timeline_info["slot_id"]
 
                 # 1. Automatic 9:00 PM Cutoff: Turn OFF when 9:00 PM is reached
                 if enabled and (now.hour >= OFFICE_END_HOUR or now.hour < OFFICE_START_HOUR):
@@ -359,9 +405,11 @@ class AutoPilotScheduler:
                             json.dump(profile.model_dump(), f, indent=2)
                         self._was_active_in_office_hours = False
                         self._last_enabled_state = False
+                        self._last_executed_slot_id = None
                         emit_event("autopilot", "status", {
                             "state": "idle",
                             "enabled": False,
+                            "phase": "closed",
                             "message": "🌙 9:00 PM reached. Office hours ended. Auto-Pilot automatically turned OFF."
                         })
                         if self._wake_event is not None:
@@ -374,17 +422,18 @@ class AutoPilotScheduler:
                             await asyncio.sleep(15)
                         continue
 
-                # 2. Inside Office Hours (9:00 AM – 9:00 PM)
+                # 2. Inside Office Hours (9:00 AM – 9:00 PM): 1-Hour Work + 30-Min Rest Cadence
                 if is_office_hours:
                     self._was_active_in_office_hours = True
                     if enabled and not self._is_executing:
-                        if self._last_scheduled_hour != now.hour:
-                            self._last_scheduled_hour = now.hour
-                            logger.info(f"⏰ Hourly Auto-Pilot slot reached ({now.hour}:00 IST). Starting execution for scheduled portal...")
-                            asyncio.create_task(self.execute_run(trigger_source=f"hourly_slot_{now.hour}"))
+                        if phase == "work" and self._last_executed_slot_id != slot_id:
+                            self._last_executed_slot_id = slot_id
+                            logger.info(f"⏰ Work Slot {slot_id} reached ({timeline_info['slot_label']}). Starting autonomous Naukri scan...")
+                            asyncio.create_task(self.execute_run(trigger_source=f"work_slot_{slot_id}"))
                 else:
                     self._was_active_in_office_hours = False
                     self._last_scheduled_hour = None
+                    self._last_executed_slot_id = None
 
             except Exception as loop_err:
                 logger.warning(f"Auto-Pilot ticker notice: {loop_err}")
