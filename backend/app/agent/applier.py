@@ -22,6 +22,7 @@ try:
     from app.config import DATA_DIR, OUTPUT_DIR
     from app.agent.scorer import load_profile
     from app.agent.qa_bank import get_or_generate_answer
+    from app.agent.browser import DEFAULT_USER_AGENT, sanitize_session_preferences
     from app.agent.stealth import (
         build_stealth_js,
         get_stealth_chromium_args,
@@ -33,6 +34,7 @@ except ImportError:
     from ..config import DATA_DIR, OUTPUT_DIR
     from .scorer import load_profile
     from .qa_bank import get_or_generate_answer
+    from .browser import DEFAULT_USER_AGENT, sanitize_session_preferences
     from .stealth import (
         build_stealth_js,
         get_stealth_chromium_args,
@@ -444,10 +446,17 @@ class EasyApplyFiller:
         Inherits authenticated browser session cookies from backend/data/browser_session/.
         Handles Already Applied, Login Required, Company Site Redirection, and Questionnaire drawers.
         """
+        logger.info(f"[{tid}] Warming authenticated session via Naukri Homepage...")
+        try:
+            page.goto("https://www.naukri.com/mnjuser/homepage", timeout=30000, wait_until="domcontentloaded")
+            page.wait_for_timeout(2000)
+        except Exception as warm_err:
+            logger.debug(f"[{tid}] Session warm-up notice: {warm_err}")
+
         logger.info(f"[{tid}] Navigating to live Naukri posting: {target_url}")
         try:
-            page.goto(target_url, timeout=30000, wait_until="domcontentloaded")
-            page.wait_for_timeout(random.randint(1800, 2500))
+            page.goto(target_url, timeout=35000, wait_until="load")
+            page.wait_for_timeout(random.randint(2500, 3500))
         except Exception as nav_err:
             logger.error(f"[{tid}] Failed to reach Naukri listing: {nav_err}")
             context.close()
@@ -569,24 +578,65 @@ class EasyApplyFiller:
 
         page.wait_for_timeout(random.randint(2000, 3000))
 
-        # Check for questionnaire drawer or chatbot popup
-        drawer = page.query_selector(".chatbot_drawer, .drawer-wrapper, .apply-modal-wrapper, .bot-drawer")
+        # Check for questionnaire drawer or modern conversational chatbot
+        drawer_sel = "._chatBotContainer, .chatbot_drawer, .drawer-wrapper, .apply-modal-wrapper, .bot-drawer"
+        drawer = page.query_selector(drawer_sel)
         if drawer and drawer.is_visible():
             logger.info(f"[{tid}] Naukri questionnaire drawer detected. Auto-answering screening fields...")
-            try:
-                # Answer notice period if asked
-                np_btn = page.query_selector("button:has-text('15 Days or less'), button:has-text('15 Days'), button:has-text('Immediate'), input[placeholder*='notice']")
-                if np_btn:
-                    np_btn.click()
-                    page.wait_for_timeout(1000)
+            for turn in range(1, 8):
+                page.wait_for_timeout(1500)
+                cb = page.query_selector(drawer_sel)
+                if not cb or not cb.is_visible():
+                    logger.info(f"[{tid}] Drawer closed or completed.")
+                    break
 
-                # Click Submit in drawer
-                drawer_submit = page.query_selector("button:has-text('Save & Apply'), button:has-text('Submit'), button:has-text('Apply'):visible")
-                if drawer_submit:
-                    drawer_submit.click()
-                    page.wait_for_timeout(2000)
-            except Exception as drawer_err:
-                logger.warning(f"[{tid}] Notice handling questionnaire drawer: {drawer_err}")
+                cb_text = (cb.inner_text() or "").lower()
+                if any(w in cb_text for w in ["successfully applied", "application sent", "applied for the job", "applied"]):
+                    logger.info(f"[{tid}] Application success message detected in chatbot!")
+                    break
+
+                # 1. Radio / pill options
+                labels = cb.query_selector_all("label.ssrc__label, .ssrc__radio-btn-container, [role='radio']")
+                chosen = None
+                for pref in ["0-1 years", "1-2 years", "yes", "immediate", "15 days"]:
+                    for l in labels:
+                        if pref in (l.inner_text() or "").strip().lower():
+                            chosen = l
+                            break
+                    if chosen:
+                        break
+                if not chosen and labels:
+                    chosen = labels[0]
+
+                if chosen:
+                    try:
+                        box = chosen.bounding_box()
+                        if box:
+                            page.mouse.click(box["x"] + box["width"]/2, box["y"] + box["height"]/2)
+                        else:
+                            chosen.click()
+                    except Exception as click_err:
+                        logger.debug(f"[{tid}] Option click notice: {click_err}")
+                    page.wait_for_timeout(1200)
+
+                # 2. Click Save / Submit in drawer
+                save_el = cb.query_selector(".sendMsgbtn_container, .sendMsg, button:has-text('Save & Apply'), button:has-text('Submit'), button:has-text('Apply')")
+                if save_el:
+                    try:
+                        s_box = save_el.bounding_box()
+                        if s_box:
+                            page.mouse.click(s_box["x"] + s_box["width"]/2, s_box["y"] + s_box["height"]/2)
+                        else:
+                            save_el.click()
+                    except Exception as save_err:
+                        logger.debug(f"[{tid}] Save click notice: {save_err}")
+                    page.wait_for_timeout(2500)
+
+        page.wait_for_timeout(2000)
+        try:
+            page.screenshot(path=str(confirmed_snapshot_file), full_page=False)
+        except Exception:
+            pass
 
         context.close()
         logger.info(f"[{tid}] Naukri application submitted successfully.")
@@ -596,6 +646,7 @@ class EasyApplyFiller:
             thread_id=tid,
             job_title=job_title,
             company_name=company_name,
+            confirmation_snapshot_path=str(confirmed_snapshot_file),
             steps_traversed=1
         )
 
@@ -978,20 +1029,29 @@ class EasyApplyFiller:
         if "indeed.com" in target_url_or_path.lower():
             session_dir = DATA_DIR / "indeed_session"
         session_dir.mkdir(parents=True, exist_ok=True)
+        sanitize_session_preferences(session_dir)
 
         with sync_playwright() as p:
-            fp = get_random_fingerprint()
-            context = p.chromium.launch_persistent_context(
-                user_data_dir=str(session_dir),
-                headless=self.headless,
-                args=get_stealth_chromium_args(),
-                viewport={"width": 1280, "height": 800},
-                user_agent=fp["user_agent"],
-                locale="en-US",
-                timezone_id="Asia/Kolkata",
-                ignore_https_errors=True,
-            )
-            context.add_init_script(build_stealth_js(fp))
+            launch_args = list(get_stealth_chromium_args())
+            launch_args.extend(["--no-first-run", "--no-default-browser-check"])
+            launch_kwargs = {
+                "user_data_dir": str(session_dir),
+                "headless": self.headless,
+                "channel": "chrome",
+                "args": launch_args,
+                "viewport": {"width": 1280, "height": 800},
+                "user_agent": DEFAULT_USER_AGENT,
+                "locale": "en-US",
+                "timezone_id": "Asia/Kolkata",
+                "ignore_https_errors": True,
+            }
+            try:
+                context = p.chromium.launch_persistent_context(**launch_kwargs)
+            except Exception:
+                del launch_kwargs["channel"]
+                context = p.chromium.launch_persistent_context(**launch_kwargs)
+
+            context.add_init_script(build_stealth_js())
             page = context.pages[0] if context.pages else context.new_page()
 
             # Specialized handler for live Naukri applications

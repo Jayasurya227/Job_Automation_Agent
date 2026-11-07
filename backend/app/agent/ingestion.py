@@ -487,7 +487,7 @@ async def discover_and_ingest(
             except Exception:
                 loc_str = "Hyderabad"
 
-        effective_portals = portals or ["naukri", "indeed"]
+        effective_portals = portals or ["naukri"]
         portal_names = ", ".join([p.title() for p in effective_portals])
         freshness_label = f"Past {freshness_days * 24} Hours" if freshness_days == 1 else (f"Past {freshness_days} Days" if freshness_days > 0 else "All Time")
 

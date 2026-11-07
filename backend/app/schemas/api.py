@@ -106,7 +106,7 @@ class DiscoverJobsRequest(BaseModel):
     search_terms: Optional[List[str]] = Field(default=None, description="List of target roles to scrape dynamically")
     location: Optional[str] = Field(default=None, description="Target location or 'Remote'")
     locations: Optional[List[str]] = Field(default=None, description="List of target locations to scrape dynamically")
-    portals: Optional[List[str]] = Field(default=["naukri", "indeed"], description="List of job portals to scrape")
+    portals: Optional[List[str]] = Field(default=["naukri"], description="List of job portals to scrape")
     results_wanted: int = Field(default=8, ge=1, le=25, description="Number of results to query per portal")
     freshness_days: Optional[int] = Field(default=1, ge=0, le=30, description="Posting freshness in days (1 = last 24 hours)")
     experience_level: Optional[str] = Field(default=None, description="Experience level filter (e.g. '0-1', '1-2', '2-4', 'all')")
