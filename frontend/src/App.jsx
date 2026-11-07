@@ -521,7 +521,7 @@ export default function App() {
               );
             })()}
 
-            {/* 2. Live Timetable Status Banner (100% Naukri: 1-Hour Work + 30-Min Rest Cadence) */}
+            {/* 2. Sleek, Minimal Timetable Status Pill */}
             {(() => {
               const timeline = autopilotStatus?.timeline;
               if (!timeline) return null;
@@ -530,66 +530,62 @@ export default function App() {
               const isWork = phase === 'work';
               const isBreak = phase === 'break';
 
+              let pillText = '';
+              let pillBadge = '';
+              if (isWork) {
+                pillText = `🚀 Searching Naukri (${timeline.slot_label || 'Active'})`;
+                pillBadge = `Break in ${timeline.remaining_minutes || 0}m`;
+              } else if (isBreak) {
+                pillText = `💤 Resting Cooldown`;
+                pillBadge = `Next scan in ${timeline.remaining_minutes || 0}m`;
+              } else {
+                pillText = `🌙 Standby (Office Hours: 9 AM – 9 PM)`;
+                pillBadge = `Resumes 9:00 AM`;
+              }
+
               return (
-                <div className="glass-panel" style={{
-                  display: 'flex',
+                <div style={{
+                  display: 'inline-flex',
                   alignItems: 'center',
                   justifyContent: 'space-between',
-                  flexWrap: 'wrap',
-                  gap: '12px',
-                  padding: '12px 18px',
-                  borderRadius: '10px',
+                  gap: '10px',
+                  padding: '4px 12px',
+                  borderRadius: '20px',
                   background: isWork 
                     ? 'rgba(16, 185, 129, 0.08)' 
-                    : (isBreak ? 'rgba(245, 158, 11, 0.08)' : 'rgba(100, 116, 139, 0.08)'),
-                  border: `1.5px solid ${isWork ? 'rgba(16, 185, 129, 0.28)' : (isBreak ? 'rgba(245, 158, 11, 0.28)' : 'rgba(100, 116, 139, 0.28)')}`,
-                  boxShadow: 'var(--shadow-sm)'
+                    : (isBreak ? 'rgba(245, 158, 11, 0.08)' : 'rgba(255, 255, 255, 0.7)'),
+                  border: `1px solid ${isWork ? 'rgba(16, 185, 129, 0.25)' : (isBreak ? 'rgba(245, 158, 11, 0.25)' : 'rgba(0, 0, 0, 0.08)')}`,
+                  backdropFilter: 'blur(8px)',
+                  width: 'fit-content',
+                  fontSize: '0.78rem',
+                  fontWeight: 600,
+                  color: isWork ? '#065f46' : (isBreak ? '#92400e' : 'var(--text-secondary)'),
+                  boxShadow: 'var(--shadow-sm)',
+                  margin: '0 0 2px 0'
                 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                    <span style={{ fontSize: '1.35rem', lineHeight: 1 }}>
-                      {isWork ? '🚀' : (isBreak ? '💤' : '🌙')}
-                    </span>
-                    <div>
-                      <div style={{
-                        fontSize: '0.88rem',
-                        fontWeight: 700,
-                        color: isWork ? 'var(--emerald)' : (isBreak ? 'var(--amber)' : 'var(--text-muted)'),
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '8px'
-                      }}>
-                        <span>{timeline.status_message}</span>
-                        {isWork && (
-                          <span style={{
-                            display: 'inline-block',
-                            width: '8px',
-                            height: '8px',
-                            borderRadius: '50%',
-                            background: '#10b981',
-                            boxShadow: '0 0 8px rgba(16, 185, 129, 0.8)'
-                          }} />
-                        )}
-                      </div>
-                      <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', marginTop: '2px' }}>
-                        100% Naukri.com Engine • Current Slot: <strong>{timeline.slot_label}</strong> • Next: <strong>{timeline.next_event_label}</strong>
-                      </div>
-                    </div>
+                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                    <span>{pillText}</span>
+                    {isWork && (
+                      <span style={{
+                        width: '6px',
+                        height: '6px',
+                        borderRadius: '50%',
+                        background: '#10b981',
+                        boxShadow: '0 0 6px #10b981',
+                        display: 'inline-block'
+                      }} />
+                    )}
                   </div>
-
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <span style={{
-                      fontSize: '0.76rem',
-                      padding: '4px 12px',
-                      borderRadius: '20px',
-                      fontWeight: 700,
-                      background: isWork ? 'rgba(16, 185, 129, 0.16)' : (isBreak ? 'rgba(245, 158, 11, 0.16)' : 'rgba(100, 116, 139, 0.16)'),
-                      color: isWork ? '#059669' : (isBreak ? '#d97706' : 'var(--text-muted)')
-                    }}>
-                      {isWork 
-                        ? `Work Slot ${timeline.slot_id}/8 (${timeline.remaining_minutes}m left)` 
-                        : (isBreak ? `Rest Break ${timeline.slot_id}/8 (${timeline.remaining_minutes}m left)` : 'Standby until 9:00 AM')}
-                    </span>
-                  </div>
+                  <span style={{
+                    fontSize: '0.72rem',
+                    padding: '2px 8px',
+                    borderRadius: '12px',
+                    background: isWork ? 'rgba(16, 185, 129, 0.15)' : (isBreak ? 'rgba(245, 158, 11, 0.15)' : 'rgba(0, 0, 0, 0.05)'),
+                    color: isWork ? '#047857' : (isBreak ? '#b45309' : 'var(--text-muted)'),
+                    fontWeight: 700
+                  }}>
+                    {pillBadge}
+                  </span>
                 </div>
               );
             })()}
