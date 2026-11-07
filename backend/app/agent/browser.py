@@ -98,9 +98,18 @@ class BrowserSessionManager:
         """Creates the session directory if it does not already exist."""
         self.session_dir.mkdir(parents=True, exist_ok=True)
 
-    def get_launch_args(self) -> list[str]:
+    def get_launch_args(self, headless: bool = True) -> list[str]:
         """Returns hardened Chromium launch flags to bypass bot detection."""
-        return get_stealth_chromium_args()
+        args = get_stealth_chromium_args()
+        if not headless:
+            args = [a for a in args if a not in ["--disable-backgrounding-occluded-windows", "--disable-renderer-backgrounding"]]
+            args.extend([
+                "--start-maximized",
+                "--window-position=50,50",
+                "--window-size=1280,900",
+                "--disable-features=IsolateOrigins,site-per-process,AudioServiceSandbox",
+            ])
+        return args
 
     @asynccontextmanager
     async def get_context(self, headless: Optional[bool] = None) -> AsyncGenerator[BrowserContext, None]:
@@ -118,9 +127,9 @@ class BrowserSessionManager:
                     launch_kwargs = {
                         "user_data_dir": str(self.session_dir),
                         "headless": is_headless,
-                        "viewport": cast(Any, self.viewport),
+                        "viewport": None if not is_headless else cast(Any, self.viewport),
                         "user_agent": self.user_agent,
-                        "args": self.get_launch_args(),
+                        "args": self.get_launch_args(headless=is_headless),
                         "locale": "en-US",
                         "timezone_id": "Asia/Kolkata",
                         "ignore_https_errors": True,
@@ -137,9 +146,9 @@ class BrowserSessionManager:
                 context = await playwright.chromium.launch_persistent_context(
                     user_data_dir=str(self.session_dir),
                     headless=is_headless,
-                    viewport=cast(Any, self.viewport),
+                    viewport=None if not is_headless else cast(Any, self.viewport),
                     user_agent=self.user_agent,
-                    args=self.get_launch_args(),
+                    args=self.get_launch_args(headless=is_headless),
                     locale="en-US",
                     timezone_id="Asia/Kolkata",
                     ignore_https_errors=True,

@@ -114,7 +114,7 @@ export default function AccountsSettings({ notify }) {
         try {
           const statusRes = await api.getIndeedSessionStatus();
           setIndeedSessionInfo(statusRes);
-          if (statusRes.connected || attempts >= 10) {
+          if (statusRes.connected || attempts >= 75) {
             clearInterval(interval);
             setLaunchingIndeedSession(false);
             if (statusRes.connected && notify) {
@@ -122,7 +122,7 @@ export default function AccountsSettings({ notify }) {
             }
           }
         } catch {
-          if (attempts >= 10) {
+          if (attempts >= 75) {
             clearInterval(interval);
             setLaunchingIndeedSession(false);
           }
