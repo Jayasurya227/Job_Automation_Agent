@@ -446,6 +446,9 @@ class EasyApplyFiller:
         Inherits authenticated browser session cookies from backend/data/browser_session/.
         Handles Already Applied, Login Required, Company Site Redirection, and Questionnaire drawers.
         """
+        self.current_job_title = job_title
+        self.current_company_name = company_name
+
         logger.info(f"[{tid}] Warming authenticated session via Naukri Homepage...")
         try:
             page.goto("https://www.naukri.com/mnjuser/homepage", timeout=30000, wait_until="domcontentloaded")
@@ -582,44 +585,116 @@ class EasyApplyFiller:
         drawer_sel = "._chatBotContainer, .chatbot_drawer, .drawer-wrapper, .apply-modal-wrapper, .bot-drawer"
         drawer = page.query_selector(drawer_sel)
         if drawer and drawer.is_visible():
-            logger.info(f"[{tid}] Naukri questionnaire drawer detected. Auto-answering screening fields...")
-            for turn in range(1, 8):
+            logger.info(f"[{tid}] Naukri questionnaire drawer detected. Auto-answering screening fields with AI LLM Brain...")
+            for turn in range(1, 10):
                 page.wait_for_timeout(1500)
                 cb = page.query_selector(drawer_sel)
                 if not cb or not cb.is_visible():
                     logger.info(f"[{tid}] Drawer closed or completed.")
                     break
 
-                cb_text = (cb.inner_text() or "").lower()
-                if any(w in cb_text for w in ["successfully applied", "application sent", "applied for the job", "applied"]):
+                cb_raw = cb.inner_text() or ""
+                cb_text = cb_raw.lower()
+                if any(w in cb_text for w in ["successfully applied", "application sent", "applied for the job", "applied to this job", "has been sent"]):
                     logger.info(f"[{tid}] Application success message detected in chatbot!")
                     break
 
-                # 1. Radio / pill options
+                # Extract latest question text from drawer
+                q_candidates = cb.query_selector_all(".botMsg, .bot-msg, .chat-bubble, .server-msg, .question-text, .msg, .ssrc__sub-title")
+                question_text = ""
+                if q_candidates:
+                    for qc in reversed(q_candidates):
+                        txt = (qc.inner_text() or "").strip()
+                        if txt and len(txt) > 3 and not any(k in txt.lower() for k in ["save", "submit", "skip"]):
+                            question_text = txt
+                            break
+                if not question_text:
+                    lines = [ln.strip() for ln in cb_raw.splitlines() if ln.strip()]
+                    if lines:
+                        for ln in reversed(lines):
+                            if len(ln) > 5 and not any(k in ln.lower() for k in ["save", "submit", "apply", "cancel"]):
+                                question_text = ln
+                                break
+
+                # 1. Radio / pill options (MCQs)
                 labels = cb.query_selector_all("label.ssrc__label, .ssrc__radio-btn-container, [role='radio']")
                 chosen = None
-                for pref in ["0-1 years", "1-2 years", "yes", "immediate", "15 days"]:
-                    for l in labels:
-                        if pref in (l.inner_text() or "").strip().lower():
-                            chosen = l
-                            break
-                    if chosen:
-                        break
-                if not chosen and labels:
-                    chosen = labels[0]
 
-                if chosen:
+                if labels:
+                    opt_texts = [(l.inner_text() or "").strip() for l in labels if (l.inner_text() or "").strip()]
+                    logger.info(f"[{tid}] Chatbot Screening Question: '{question_text}' | Options: {opt_texts}")
+
+                    # Consult Claude Haiku LLM Brain via Q&A Bank
+                    ai_answer = None
                     try:
-                        box = chosen.bounding_box()
-                        if box:
-                            page.mouse.click(box["x"] + box["width"]/2, box["y"] + box["height"]/2)
-                        else:
-                            chosen.click()
-                    except Exception as click_err:
-                        logger.debug(f"[{tid}] Option click notice: {click_err}")
-                    page.wait_for_timeout(1200)
+                        ai_answer = self._lookup_answer(
+                            label_text=question_text or "Screening Question",
+                            allow_ai=True,
+                            field_type="radio",
+                            options=opt_texts,
+                        )
+                    except Exception as ai_err:
+                        logger.warning(f"[{tid}] AI screening answer lookup notice: {ai_err}")
 
-                # 2. Click Save / Submit in drawer
+                    if ai_answer:
+                        ai_ans_clean = str(ai_answer).strip().lower()
+                        logger.info(f"[{tid}] AI Brain selected option: '{ai_answer}'")
+                        # 1a. Exact match
+                        for l in labels:
+                            lt = (l.inner_text() or "").strip().lower()
+                            if lt == ai_ans_clean:
+                                chosen = l
+                                break
+                        # 1b. Fuzzy / substring match
+                        if not chosen:
+                            for l in labels:
+                                lt = (l.inner_text() or "").strip().lower()
+                                if ai_ans_clean in lt or lt in ai_ans_clean:
+                                    chosen = l
+                                    break
+
+                    # 1c. Heuristic candidate preference fallback if LLM returned None
+                    if not chosen:
+                        for pref in ["0-1 years", "1-2 years", "yes", "immediate", "15 days", "15 days or less"]:
+                            for l in labels:
+                                if pref in (l.inner_text() or "").strip().lower():
+                                    chosen = l
+                                    break
+                            if chosen:
+                                break
+
+                    # 1d. Final fallback to first option
+                    if not chosen:
+                        chosen = labels[0]
+
+                    if chosen:
+                        try:
+                            box = chosen.bounding_box()
+                            if box:
+                                page.mouse.click(box["x"] + box["width"]/2, box["y"] + box["height"]/2)
+                            else:
+                                chosen.click()
+                        except Exception as click_err:
+                            logger.debug(f"[{tid}] Option click notice: {click_err}")
+                        page.wait_for_timeout(1200)
+
+                else:
+                    # 2. Check for text or number inputs in chatbot drawer
+                    text_inps = cb.query_selector_all("input[type='text']:visible, input[type='number']:visible, textarea:visible")
+                    for inp in text_inps:
+                        if (inp.input_value() or "").strip():
+                            continue
+                        f_type = inp.get_attribute("type") or "text"
+                        val = self._lookup_answer(label_text=question_text or "Experience in years", allow_ai=True, field_type=f_type)
+                        fill_val = val if val else ("1" if f_type == "number" else "Immediate")
+                        try:
+                            inp.fill(str(fill_val))
+                            logger.info(f"[{tid}] Filled chatbot input with: '{fill_val}'")
+                        except Exception as fill_err:
+                            logger.debug(f"[{tid}] Chatbot input fill notice: {fill_err}")
+                        page.wait_for_timeout(800)
+
+                # 3. Click Save / Submit in drawer
                 save_el = cb.query_selector(".sendMsgbtn_container, .sendMsg, button:has-text('Save & Apply'), button:has-text('Submit'), button:has-text('Apply')")
                 if save_el:
                     try:
