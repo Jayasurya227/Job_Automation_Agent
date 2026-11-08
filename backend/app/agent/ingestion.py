@@ -166,16 +166,19 @@ async def ingest_single_job(
         )
         save_job_evaluation(db, job_id=job_record.id, match=match_result)
 
-        # Hybrid Brain (Claude LLM) + Hand (Agent crawler) Apply Type Decision:
-        llm_apply_type = getattr(match_result, "apply_type", "1-Click")
+        # Crawler-First Authority: The physical button detected on page has 100% supreme authority over LLM text reading
         crawler_apply_type = getattr(discovered, "apply_type", "1-Click")
+        llm_apply_type = getattr(match_result, "apply_type", "1-Click")
 
         if crawler_apply_type == "Applied":
             final_apply_type = "Applied"
-        elif llm_apply_type == "External" or crawler_apply_type == "External":
+        elif crawler_apply_type == "1-Click":
+            # Native 1-Click Apply button detected on Naukri - LLM text speculation CANNOT override physical reality
+            final_apply_type = "1-Click"
+        elif crawler_apply_type == "External":
             final_apply_type = "External"
         else:
-            final_apply_type = "1-Click"
+            final_apply_type = llm_apply_type or "1-Click"
 
         discovered.apply_type = final_apply_type
 

@@ -579,7 +579,79 @@ class EasyApplyFiller:
         except Exception:
             apply_btn.click()
 
-        page.wait_for_timeout(random.randint(2000, 3000))
+        page.wait_for_timeout(random.randint(2500, 3500))
+
+        # Check for Post-Click External Redirection / Redirection Popup
+        # Case A: Current page redirected away from naukri.com
+        if "naukri.com" not in page.url.lower():
+            logger.info(f"[{tid}] Post-click navigation redirected to external portal: {page.url}. Skipping 1-Click apply.")
+            context.close()
+            return FormFillResult(
+                status="EXTERNAL_SITE",
+                thread_id=tid,
+                job_title=job_title,
+                company_name=company_name,
+                error_message=f"Post-click redirected to external ATS portal: {page.url}"
+            )
+
+        # Case B: A new tab / popup was opened pointing outside naukri.com
+        if len(context.pages) > 1:
+            for p in context.pages[1:]:
+                if "naukri.com" not in p.url.lower():
+                    logger.info(f"[{tid}] External career portal tab opened: {p.url}. Closing and tagging External.")
+                    p.close()
+                    context.close()
+                    return FormFillResult(
+                        status="EXTERNAL_SITE",
+                        thread_id=tid,
+                        job_title=job_title,
+                        company_name=company_name,
+                        error_message="Clicking Apply opened an external employer career site."
+                    )
+
+        # Case C: An in-page modal/popup informing the user about external redirection
+        redirect_modal = page.query_selector(
+            "div:has-text('redirected to the employer'), "
+            "div:has-text('redirected to company'), "
+            "div:has-text('redirect to external site'), "
+            "div:has-text('Apply on employer website'), "
+            "button:has-text('Go to company site'), "
+            "a:has-text('Go to company site')"
+        )
+        if redirect_modal and redirect_modal.is_visible():
+            logger.info(f"[{tid}] External redirection confirmation modal detected. Tagging External.")
+            context.close()
+            return FormFillResult(
+                status="EXTERNAL_SITE",
+                thread_id=tid,
+                job_title=job_title,
+                company_name=company_name,
+                error_message="Employer requires external redirection to complete application."
+            )
+
+        # Check for immediate application success banner (Direct 1-Click without questions)
+        immediate_success = page.query_selector(
+            ".already-applied:visible, "
+            ".applied-message:visible, "
+            "div:has-text('Application sent'):visible, "
+            "div:has-text('successfully applied'):visible, "
+            "div:has-text('Applied successfully'):visible"
+        )
+        if immediate_success:
+            logger.info(f"[{tid}] Immediate application success message detected on page!")
+            try:
+                page.screenshot(path=str(confirmed_snapshot_file), full_page=False)
+            except Exception:
+                pass
+            context.close()
+            return FormFillResult(
+                status="SUBMITTED",
+                thread_id=tid,
+                job_title=job_title,
+                company_name=company_name,
+                confirmation_snapshot_path=str(confirmed_snapshot_file),
+                steps_traversed=1
+            )
 
         # Check for questionnaire drawer or modern conversational chatbot
         drawer_sel = "._chatBotContainer, .chatbot_drawer, .drawer-wrapper, .apply-modal-wrapper, .bot-drawer"
@@ -679,7 +751,7 @@ class EasyApplyFiller:
                         page.wait_for_timeout(1200)
 
                 else:
-                    # 2. Check for text or number inputs in chatbot drawer
+                    # 2. Check for written text or number inputs in chatbot drawer
                     text_inps = cb.query_selector_all("input[type='text']:visible, input[type='number']:visible, textarea:visible")
                     for inp in text_inps:
                         if (inp.input_value() or "").strip():
@@ -687,11 +759,24 @@ class EasyApplyFiller:
                         f_type = inp.get_attribute("type") or "text"
                         val = self._lookup_answer(label_text=question_text or "Experience in years", allow_ai=True, field_type=f_type)
                         fill_val = val if val else ("1" if f_type == "number" else "Immediate")
+                        val_str = str(fill_val)
                         try:
-                            inp.fill(str(fill_val))
-                            logger.info(f"[{tid}] Filled chatbot input with: '{fill_val}'")
+                            inp.click()
+                            page.wait_for_timeout(random.randint(80, 160))
+                            inp.fill("")
+                            if len(val_str) <= 60:
+                                for ch in val_str:
+                                    inp.type(ch)
+                                    page.wait_for_timeout(random.randint(15, 40))
+                            else:
+                                inp.fill(val_str)
+                            logger.info(f"[{tid}] Human-typed written answer into chatbot: '{val_str}'")
                         except Exception as fill_err:
                             logger.debug(f"[{tid}] Chatbot input fill notice: {fill_err}")
+                            try:
+                                inp.fill(val_str)
+                            except Exception:
+                                pass
                         page.wait_for_timeout(800)
 
                 # 3. Click Save / Submit in drawer

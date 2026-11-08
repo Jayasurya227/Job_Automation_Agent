@@ -365,11 +365,23 @@ def _fetch_naukri_full_description_sync(page, job_url: str, fallback_desc: str =
             "[class*='apply-type-external'], "
             "a:has-text('Apply on employer website')"
         )
-        is_external = bool(
-            (ext_btn and ext_btn.is_visible()) or
-            "aggregated from external source" in body_text.lower() or
-            ("naukri.com" not in page.url.lower())
+        has_ext_btn = bool(ext_btn and ext_btn.is_visible())
+
+        apply_btn = page.query_selector(
+            "button#apply-button, "
+            "button:has-text('Apply'):visible, "
+            "button:has-text('Apply on Naukri'):visible"
         )
+        has_apply_btn = bool(apply_btn and apply_btn.is_visible())
+
+        # Supreme Authority: If native 1-Click Apply button is visible and no external button, it is 100% 1-Click
+        if has_apply_btn and not has_ext_btn:
+            is_external = False
+        elif has_ext_btn or ("naukri.com" not in page.url.lower()):
+            is_external = True
+        else:
+            is_external = False
+
         apply_type = "External" if is_external else "1-Click"
 
         jd_selectors = [

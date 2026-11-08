@@ -109,3 +109,4 @@ def boost_naukri_profile(
             "status": "error",
             "message": f"Profile booster execution error: {str(boost_err)}"
         }
+
