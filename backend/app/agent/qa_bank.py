@@ -88,6 +88,46 @@ RULE_PATTERNS: List[RulePattern] = [
         "handler": lambda p: str(p.application_answers.years_of_experience),
         "category": "Experience"
     },
+    {
+        "pattern": r"(current ctc|current salary|present salary|current compensation)",
+        "handler": lambda p: "Fresher / 0" if p.application_answers.years_of_experience < 1 else "Negotiable",
+        "category": "Compensation"
+    },
+    {
+        "pattern": r"(rotational shift|night shift|work in shifts|shifts)",
+        "handler": lambda p: "Yes",
+        "category": "Preferences"
+    },
+    {
+        "pattern": r"(work from office|wfo|onsite|hybrid|work in office)",
+        "handler": lambda p: "Yes",
+        "category": "Preferences"
+    },
+    {
+        "pattern": r"(rate your english|communication skill|english proficiency)",
+        "handler": lambda p: "Proficient",
+        "category": "Skills"
+    },
+    {
+        "pattern": r"(have a laptop|personal computer|wifi|broadband|internet connection)",
+        "handler": lambda p: "Yes",
+        "category": "Logistics"
+    },
+    {
+        "pattern": r"(available for full[- ]time|full[- ]time availability|immediate full time)",
+        "handler": lambda p: "Yes",
+        "category": "Availability"
+    },
+    {
+        "pattern": r"(criminal record|convicted of|felony|background check)",
+        "handler": lambda p: "No",
+        "category": "Background"
+    },
+    {
+        "pattern": r"(gender|sex)",
+        "handler": lambda p: "Male",
+        "category": "Demographics"
+    },
 ]
 
 
@@ -326,9 +366,42 @@ def get_or_generate_answer(
             if num_match:
                 rule_ans = num_match.group(0)
             rule["answer"] = rule_ans
+
+        # If options are provided, map rule answer to exact or best option
+        if options:
+            matched_opt = None
+            for opt in options:
+                if rule_ans.lower() == opt.lower() or rule_ans.lower() in opt.lower() or opt.lower() in rule_ans.lower():
+                    matched_opt = opt
+                    break
+            # Specific heuristic mappings for common Naukri options
+            if not matched_opt and "notice" in question.lower():
+                for opt in options:
+                    if any(k in opt.lower() for k in ["15 days", "immediate", "less than 15"]):
+                        matched_opt = opt
+                        break
+            if not matched_opt and "experience" in question.lower():
+                for opt in options:
+                    if any(k in opt.lower() for k in ["0-1", "fresher", "less than 1", "1 year"]):
+                        matched_opt = opt
+                        break
+
+            if matched_opt:
+                rule["answer"] = matched_opt
+            elif allow_ai_generation:
+                # If rule answer doesn't cleanly map to provided options, let Claude select the optimal option
+                return generate_ai_screening_answer(
+                    question=question,
+                    job_title=job_title,
+                    company_name=company_name,
+                    job_description=job_description,
+                    field_type=field_type,
+                    options=options,
+                )
+
         # Cache rule answer to SQLite DB for instant exact matches later
         with SessionLocal() as db:
-            crud.save_qa_answer(db, question=question, answer=rule_ans, category=rule["category"])
+            crud.save_qa_answer(db, question=question, answer=rule["answer"], category=rule["category"])
         return rule
 
     # 3. Tier 3: Claude AI Generator

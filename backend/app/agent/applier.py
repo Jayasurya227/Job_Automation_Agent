@@ -768,39 +768,74 @@ class EasyApplyFiller:
                                 chosen.click()
                         except Exception as click_err:
                             logger.debug(f"[{tid}] Option click notice: {click_err}")
-                        page.wait_for_timeout(1200)
+                        page.wait_for_timeout(1000)
 
-                else:
-                    # 2. Check for written text or number inputs in chatbot drawer
-                    text_inps = cb.query_selector_all("input[type='text']:visible, input[type='number']:visible, textarea:visible")
-                    for inp in text_inps:
-                        if (inp.input_value() or "").strip():
-                            continue
-                        f_type = inp.get_attribute("type") or "text"
-                        val = self._lookup_answer(label_text=question_text or "Experience in years", allow_ai=True, field_type=f_type)
-                        fill_val = val if val else ("1" if f_type == "number" else "Immediate")
-                        val_str = str(fill_val)
+                # 2. Check for written text or number inputs or textareas in chatbot drawer
+                text_inps = cb.query_selector_all("input[type='text']:visible, input[type='number']:visible, textarea:visible")
+                for inp in text_inps:
+                    if (inp.input_value() or "").strip():
+                        continue
+                    f_type = inp.get_attribute("type") or ("number" if "number" in (inp.get_attribute("inputmode") or "") else "text")
+                    val = self._lookup_answer(label_text=question_text or "Candidate Screening Response", allow_ai=True, field_type=f_type)
+                    fill_val = val if val else ("1" if f_type == "number" else "Yes, proficient and experienced.")
+                    val_str = str(fill_val)
+                    try:
+                        inp.click()
+                        page.wait_for_timeout(random.randint(80, 160))
+                        # Select all and delete to clear existing value
+                        page.keyboard.press("Control+A")
+                        page.keyboard.press("Backspace")
+                        page.wait_for_timeout(random.randint(30, 70))
+                        if len(val_str) <= 300:
+                            for ch in val_str:
+                                inp.type(ch)
+                                page.wait_for_timeout(random.randint(12, 35))
+                        else:
+                            inp.fill(val_str)
+                        logger.info(f"[{tid}] Human-typed written answer into chatbot: '{val_str}'")
+                    except Exception as fill_err:
+                        logger.debug(f"[{tid}] Chatbot input fill notice: {fill_err}")
                         try:
-                            inp.click()
-                            page.wait_for_timeout(random.randint(80, 160))
-                            inp.fill("")
-                            if len(val_str) <= 60:
-                                for ch in val_str:
-                                    inp.type(ch)
-                                    page.wait_for_timeout(random.randint(15, 40))
-                            else:
-                                inp.fill(val_str)
-                            logger.info(f"[{tid}] Human-typed written answer into chatbot: '{val_str}'")
-                        except Exception as fill_err:
-                            logger.debug(f"[{tid}] Chatbot input fill notice: {fill_err}")
-                            try:
-                                inp.fill(val_str)
-                            except Exception:
-                                pass
-                        page.wait_for_timeout(800)
+                            inp.fill(val_str)
+                        except Exception:
+                            pass
+                    page.wait_for_timeout(600)
 
-                # 3. Click Save / Submit in drawer
-                save_el = cb.query_selector(".sendMsgbtn_container, .sendMsg, button:has-text('Save & Apply'), button:has-text('Submit'), button:has-text('Apply')")
+                # 3. Check for select dropdowns in drawer
+                select_els = cb.query_selector_all("select:visible")
+                for s_el in select_els:
+                    opt_tags = s_el.query_selector_all("option")
+                    select_opts = [(o.inner_text() or "").strip() for o in opt_tags if (o.inner_text() or "").strip()]
+                    if select_opts:
+                        ans = self._lookup_answer(label_text=question_text or "Screening Selection", allow_ai=True, field_type="select", options=select_opts)
+                        if ans:
+                            for o in opt_tags:
+                                if (o.inner_text() or "").strip().lower() == ans.lower():
+                                    s_el.select_option(value=o.get_attribute("value") or ans)
+                                    logger.info(f"[{tid}] Selected dropdown option: '{ans}'")
+                                    break
+
+                # 4. Click Save / Submit in drawer
+                save_selectors = [
+                    ".sendMsgbtn_container:visible",
+                    ".sendMsg:visible",
+                    "button:has-text('Save & Apply'):visible",
+                    "button:has-text('Save'):visible",
+                    "button:has-text('Submit'):visible",
+                    "button:has-text('Apply'):visible",
+                    "button:has-text('Next'):visible",
+                    "[class*='sendMsg']:visible",
+                    "[class*='saveBtn']:visible",
+                    "span:has-text('Save'):visible",
+                    "a:has-text('Save'):visible",
+                ]
+                save_el = None
+                for sel in save_selectors:
+                    elem = cb.query_selector(sel)
+                    if elem and elem.is_visible():
+                        save_el = elem
+                        break
+
                 if save_el:
                     try:
                         s_box = save_el.bounding_box()
