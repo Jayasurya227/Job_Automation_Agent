@@ -562,6 +562,19 @@ class EasyApplyFiller:
                 error_message="Active Apply button not found on Naukri job card."
             )
 
+        # Pre-Click Watchdog: Check if the apply button itself directly links outside naukri.com
+        btn_href = (apply_btn.get_attribute("href") or "").strip()
+        if btn_href and btn_href.startswith("http") and "naukri.com" not in btn_href.lower():
+            logger.info(f"[{tid}] Apply button href points directly to external portal: {btn_href}. Skipping 1-Click apply.")
+            context.close()
+            return FormFillResult(
+                status="EXTERNAL_SITE",
+                thread_id=tid,
+                job_title=job_title,
+                company_name=company_name,
+                error_message=f"Apply button links directly to external portal: {btn_href}"
+            )
+
         if not auto_submit:
             context.close()
             return FormFillResult(
@@ -612,11 +625,18 @@ class EasyApplyFiller:
         # Case C: An in-page modal/popup informing the user about external redirection
         redirect_modal = page.query_selector(
             "div:has-text('redirected to the employer'), "
+            "div:has-text('redirected to employer'), "
             "div:has-text('redirected to company'), "
             "div:has-text('redirect to external site'), "
             "div:has-text('Apply on employer website'), "
+            "div:has-text('Apply on company site'), "
+            "div:has-text('external career site'), "
+            "div:has-text('career website'), "
             "button:has-text('Go to company site'), "
-            "a:has-text('Go to company site')"
+            "button:has-text('Proceed to company site'), "
+            "button:has-text('Continue to apply'), "
+            "a:has-text('Go to company site'), "
+            "a:has-text('Proceed to company site')"
         )
         if redirect_modal and redirect_modal.is_visible():
             logger.info(f"[{tid}] External redirection confirmation modal detected. Tagging External.")
