@@ -295,6 +295,17 @@ class AutoPilotScheduler:
                 self._daily_applications_count = crud.get_applied_today_count(db)
                 logger.info(f"📊 Auto-Pilot quota check: {self._daily_applications_count}/{max_daily} applications submitted in past 24 hours.")
 
+                # Trigger daily Recruiter Profile Booster (Resdex Freshness)
+                today_str = datetime.now().strftime("%Y-%m-%d")
+                if getattr(self, "_last_boost_date", None) != today_str:
+                    logger.info("🚀 Triggering daily Recruiter Profile Booster (Resdex Freshness)...")
+                    try:
+                        from app.agent.booster import boost_naukri_profile
+                        await asyncio.to_thread(boost_naukri_profile)
+                        self._last_boost_date = today_str
+                    except Exception as boost_err:
+                        logger.warning(f"Profile booster notice: {boost_err}")
+
                 # 2. Step 1: Drain leftover unapplied jobs from Review ('Ready') up to daily limit
                 if AUTOPILOT_AUTO_SUBMIT and self._daily_applications_count < max_daily:
                     existing_ready = crud.list_jobs(db=db, limit=50, status="Ready")

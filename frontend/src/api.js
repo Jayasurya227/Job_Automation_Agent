@@ -162,6 +162,7 @@ export const api = {
   // Auto-Pilot Autonomous Background Engine
   getAutopilotStatus: () => request('/api/autopilot/status'),
   runAutopilotNow: () => request('/api/autopilot/run-now', { method: 'POST' }),
+  boostProfile: () => request('/api/autopilot/boost-profile', { method: 'POST' }),
 
   // Portal Persistent Session (Naukri Safe OTP Login)
   getNaukriSessionStatus: () => request('/api/portals/naukri/session-status'),

@@ -852,6 +852,14 @@ async def trigger_autopilot_now():
     }
 
 
+@app.post("/api/autopilot/boost-profile", tags=["Auto-Pilot"])
+async def trigger_profile_boost():
+    """Triggers an on-demand Naukri Recruiter Profile Boost."""
+    from app.agent.booster import boost_naukri_profile
+    res = await asyncio.to_thread(boost_naukri_profile)
+    return res
+
+
 # =====================================================================
 # Portal Session Endpoints (Naukri Persistent Session)
 # =====================================================================

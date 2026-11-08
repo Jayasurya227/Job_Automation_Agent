@@ -29,6 +29,7 @@ export default function AccountsSettings({ notify }) {
 
   // Naukri session status
   const [refreshingNaukriSession, setRefreshingNaukriSession] = useState(false);
+  const [isBoostingProfile, setIsBoostingProfile] = useState(false);
   const [naukriSessionInfo, setNaukriSessionInfo] = useState({
     connected: false,
     status: 'unconfigured',
@@ -76,6 +77,22 @@ export default function AccountsSettings({ notify }) {
       if (showToast && notify) notify('Error checking Naukri session: ' + err.message, 'error');
     } finally {
       setRefreshingNaukriSession(false);
+    }
+  };
+
+  const handleBoostProfile = async () => {
+    setIsBoostingProfile(true);
+    try {
+      const res = await api.boostProfile();
+      if (res?.status === 'success') {
+        if (notify) notify('🚀 Naukri Profile Boosted! Resdex freshness updated to Active Today.', 'success');
+      } else {
+        if (notify) notify(res?.message || 'Profile boost notice', 'error');
+      }
+    } catch (err) {
+      if (notify) notify(`Profile boost error: ${err.message}`, 'error');
+    } finally {
+      setIsBoostingProfile(false);
     }
   };
 
@@ -314,15 +331,40 @@ export default function AccountsSettings({ notify }) {
               </p>
             </div>
 
-            <div className="portal-actions-footer">
-              <button
-                type="button"
-                onClick={() => setIsReconnecting(true)}
-                className="portal-reconnect-btn"
-              >
-                <RotateCcw size={14} />
-                <span>Re-connect / Refresh Mobile Session</span>
-              </button>
+            <div className="portal-actions-footer" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+                <button
+                  type="button"
+                  onClick={() => setIsReconnecting(true)}
+                  className="portal-reconnect-btn"
+                >
+                  <RotateCcw size={14} />
+                  <span>Re-connect Session</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleBoostProfile}
+                  disabled={isBoostingProfile}
+                  className="btn btn-primary"
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    padding: '6px 12px',
+                    fontSize: '0.78rem',
+                    borderRadius: '6px',
+                    background: 'linear-gradient(135deg, #059669 0%, #10b981 100%)',
+                    color: '#fff',
+                    border: 'none',
+                    cursor: isBoostingProfile ? 'not-allowed' : 'pointer',
+                    fontWeight: 600,
+                    boxShadow: '0 2px 5px rgba(16, 185, 129, 0.25)',
+                  }}
+                  title="Touches candidate resume on Naukri to index as 'Active Today' in recruiter searches"
+                >
+                  <span>{isBoostingProfile ? '⏳ Boosting...' : '🚀 Boost Profile (Active Today)'}</span>
+                </button>
+              </div>
 
               <span className="portal-path-indicator">
                 Vault: <code>backend/data/browser_session/</code>
