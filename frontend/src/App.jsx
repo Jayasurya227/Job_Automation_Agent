@@ -805,20 +805,6 @@ export default function App() {
                 </button>
 
                 <button
-                  id="settings-tab-naukri-btn"
-                  className="settings-subtab-btn"
-                  onClick={() => setSettingsTab('naukri')}
-                  style={{
-                    background: settingsTab === 'naukri' ? 'var(--primary)' : 'transparent',
-                    color: settingsTab === 'naukri' ? '#ffffff' : 'var(--text-secondary)',
-                  }}
-                >
-                  <Globe size={15} />
-                  <span>Portal Accounts</span>
-                </button>
-
-                {/* Laptop-only 3rd tab in the unified group */}
-                <button
                   id="settings-tab-history-btn"
                   className="settings-subtab-btn settings-subtab-history-desktop"
                   onClick={() => setSettingsTab('history')}
@@ -829,6 +815,19 @@ export default function App() {
                 >
                   <History size={15} />
                   <span>Application History</span>
+                </button>
+
+                <button
+                  id="settings-tab-naukri-btn"
+                  className="settings-subtab-btn"
+                  onClick={() => setSettingsTab('naukri')}
+                  style={{
+                    background: settingsTab === 'naukri' ? 'var(--primary)' : 'transparent',
+                    color: settingsTab === 'naukri' ? '#ffffff' : 'var(--text-secondary)',
+                  }}
+                >
+                  <Globe size={15} />
+                  <span>Portal Accounts</span>
                 </button>
               </div>
             </div>
