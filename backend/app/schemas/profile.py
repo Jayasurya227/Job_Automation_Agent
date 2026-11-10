@@ -24,6 +24,7 @@ class Preferences(BaseModel):
     notice_period_days: int = Field(default=0, description="Notice period in days (0 = Immediate joiner)")
     freshness_days: int = Field(default=1, ge=0, le=30, description="Default freshness filter in days (1 = last 24h, 3 = 3 days, 7 = 7 days, 0 = any)")
     experience_level: str = Field(default="0-1", description="Target experience filter: '0-1' (Fresher), '1-2' (Early Career), '2-4' (Junior/Associate), 'all' (Any)")
+    manual_discovery_limit: int = Field(default=20, ge=5, le=150, description="Max jobs to fetch during manual instant discovery")
     autopilot_enabled: bool = Field(default=False, description="Enable automated daytime office hours runs (9:00 AM – 9:00 PM)")
     autopilot_auto_apply_score: int = Field(default=75, ge=50, le=100, description="Minimum score to auto-apply")
     autopilot_max_daily_apps: int = Field(default=7, ge=1, description="Max applications per day")

@@ -25,12 +25,13 @@
       "Onsite"
     ],
     "min_expected_salary": "Negotiable / Standard Industry CTC",
-    "notice_period_days": 5,
+    "notice_period_days": 0,
     "freshness_days": 0,
     "experience_level": "all",
-    "autopilot_enabled": false,
+    "manual_discovery_limit": 50,
+    "autopilot_enabled": true,
     "autopilot_auto_apply_score": 75,
-    "autopilot_max_daily_apps": 3,
+    "autopilot_max_daily_apps": 30,
     "autopilot_run_hour": 10,
     "autopilot_run_minute": 0
   },

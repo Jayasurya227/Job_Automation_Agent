@@ -9,6 +9,7 @@ import QuotaModal from './components/QuotaModal';
 import Toast from './components/Toast';
 import AuthPage from './components/AuthPage';
 import { api } from './api';
+import { getJobApplyClassification, openExternalJobLink } from './utils/jobClassification';
 import { 
   Search, 
   Filter, 
@@ -190,6 +191,10 @@ export default function App() {
       if (eventType === 'quota_reached' || data?.event === 'quota_reached') {
         setIsQuotaModalOpen(true);
         notify('🛡️ Daily application limit reached. Auto-apply paused for today to protect your account.', 'warning');
+      } else if (eventType === 'discovery_progress' || data?.stage) {
+        if (data?.stage === 'page_scanned' && data?.message) {
+          notify(data.message, 'info');
+        }
       }
     });
     return () => {
@@ -243,15 +248,16 @@ export default function App() {
     }
 
     try {
+      const manualLimit = profile?.preferences?.manual_discovery_limit || 20;
       const result = await api.discoverJobs({
         search_terms: rolesToSearch,
         locations: locsToSearch,
         location: locsLabel,
         portals: [scheduledPortal],
-        results_wanted: 8,
+        results_wanted: manualLimit,
         freshness_days: freshness,
         min_match_score: minScore,
-        max_process: 10,
+        max_process: Math.max(manualLimit, 30),
       });
 
       await loadData();
@@ -370,6 +376,19 @@ export default function App() {
 
   const handle1ClickApply = async (job) => {
     if (!job || !job.id) return;
+
+    // Direct external link handler - Never block or run bot for external employer sites
+    const { isExternal } = getJobApplyClassification(job);
+    if (isExternal) {
+      if (job.job_url) {
+        openExternalJobLink(job.job_url);
+        notify(`🌐 Opening external application page for "${job.job_title}" at ${job.company_name}...`, 'info');
+      } else {
+        notify(`⚠️ No direct URL found for "${job.job_title}".`, 'warning');
+      }
+      return;
+    }
+
     if (applyingJobId) {
       notify('Another application is currently in progress. Please wait...', 'warning');
       return;
@@ -400,9 +419,13 @@ export default function App() {
         setIsQuotaModalOpen(true);
         notify(`🛡️ Daily application limit reached. Auto-apply paused for today to protect your account.`, 'warning');
       } else if (res.status === 'EXTERNAL_SITE') {
-        notify(`⚠️ "${job.job_title}" redirects to an external company site. Skipping 1-Click apply for now.`, 'warning');
+        // Automatically open the external company URL right away!
+        if (job.job_url) {
+          openExternalJobLink(job.job_url);
+        }
+        notify(`🌐 "${job.job_title}" redirects to external company portal. Opened posting in new tab!`, 'info');
         setJobs((prev) =>
-          prev.map((j) => (j.id === job.id ? { ...j, notes: 'External Company Portal: Direct application required.' } : j))
+          prev.map((j) => (j.id === job.id ? { ...j, notes: 'External Company Portal: Direct employer application required.' } : j))
         );
       } else if (res.status === 'LOGIN_REQUIRED') {
         notify(`⚠️ Naukri session is disconnected or expired. Please re-authenticate in Settings > Portal Accounts.`, 'warning');
@@ -579,19 +602,23 @@ export default function App() {
               let pillText = '';
               let pillBadge = '';
               if (isWork) {
-                pillText = `🚀 Searching Naukri (${timeline.slot_label || 'Active'})`;
+                const roleSnippet = timeline.active_role ? `: ${timeline.active_role}` : '';
+                pillText = `🚀 Scanning Naukri${roleSnippet} (${timeline.slot_label || 'Active'})`;
                 pillBadge = `Break in ${timeline.remaining_minutes || 0}m`;
               } else if (isBreak) {
-                pillText = `💤 Resting Cooldown`;
+                const nextSnippet = timeline.next_role ? ` (Next: ${timeline.next_role})` : '';
+                pillText = `💤 Resting Cooldown${nextSnippet}`;
                 pillBadge = `Next scan in ${timeline.remaining_minutes || 0}m`;
               } else {
-                pillText = `🌙 Standby (Office Hours: 9 AM – 9 PM)`;
+                const nextSnippet = timeline.next_role ? ` (Next: ${timeline.next_role})` : '';
+                pillText = `🌙 Standby (9 AM – 9 PM)${nextSnippet}`;
                 pillBadge = `Resumes 9:00 AM`;
               }
 
               return (
                 <div 
                   className="top-timetable-status-pill"
+                  title={timeline.status_message || pillText}
                   style={{
                     display: 'inline-flex',
                     alignItems: 'center',

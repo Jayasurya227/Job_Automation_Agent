@@ -194,10 +194,8 @@ async def ingest_single_job(
             logger.info(f"✅ ALREADY APPLIED on {discovered.portal.title()}. Triaged directly to Applied.")
         elif final_apply_type == "External":
             target_status = "Ready" if score >= AUTO_APPLY_MATCH_THRESHOLD else "Archived"
-            reason = getattr(match_result, "apply_type_reasoning", "")
-            reason_suffix = f" ({reason})" if reason else ""
-            status_note = f"External Company Portal: Direct employer application required on {discovered.portal.title()}{reason_suffix}."
-            logger.info(f"🌐 EXTERNAL PORTAL on {discovered.portal.title()}{reason_suffix}. Triaged to {target_status} with External tag.")
+            status_note = f"External Company Portal: Direct employer application required on {discovered.portal.title()}."
+            logger.info(f"🌐 EXTERNAL PORTAL on {discovered.portal.title()}. Triaged to {target_status} with External tag.")
         elif score >= AUTO_APPLY_MATCH_THRESHOLD:
             target_status = "Ready"
             status_note = f"1-Click Apply Ready: Elite ATS match {score}% (≥{AUTO_APPLY_MATCH_THRESHOLD}%). In Review queue for 1-Click apply."
@@ -258,16 +256,19 @@ async def ingest_single_job(
 async def run_autonomous_ingestion(
     discovered_jobs: List[DiscoveredJob],
     min_match_score: int = READY_MATCH_THRESHOLD,
-    max_jobs_to_process: int = 5,
+    max_jobs_to_process: Optional[int] = None,
     profile_path: str = str(DEFAULT_PROFILE_PATH),
 ) -> IngestionReport:
     """
-    Ingests a batch of discovered jobs up to max_jobs_to_process,
+    Ingests a batch of discovered jobs up to max_jobs_to_process (or all if None),
     respecting Gemini rate limits and returning a structured report.
     """
     report = IngestionReport(total_discovered=len(discovered_jobs))
 
-    to_process = discovered_jobs[:max_jobs_to_process]
+    if max_jobs_to_process is not None and max_jobs_to_process > 0:
+        to_process = discovered_jobs[:max_jobs_to_process]
+    else:
+        to_process = discovered_jobs
     logger.info(f"Starting autonomous ingestion pipeline for {len(to_process)} job(s)...")
 
     for discovered in to_process:
@@ -450,7 +451,7 @@ async def discover_and_ingest(
     freshness_days: int = 1,
     experience_level: Optional[str] = None,
     min_match_score: int = READY_MATCH_THRESHOLD,
-    max_jobs_to_process: int = 5,
+    max_jobs_to_process: Optional[int] = None,
 ) -> IngestionReport:
     """
     End-to-end autonomous discovery and ingestion pipeline.

@@ -3030,7 +3030,31 @@ body {
    generous gaps and a refined, minimal touch increase so all 4 buttons fit
    cleanly across the line.
    ========================================================================== */
+/* ==========================================================================
+   Desktop / Laptop View (min-width: 900px):
+   1. Uniform 2-line title height (min-height: 2.7em) for pixel-perfect card symmetry.
+   2. Clean single-row footer where Discovered and Applied cards have identical height.
+   3. Generous gaps and refined touch targets.
+   ========================================================================== */
 @media (min-width: 900px) {
+  .job-card-title {
+    min-height: 2.7em !important;
+    display: -webkit-box !important;
+    -webkit-line-clamp: 2 !important;
+    -webkit-box-orient: vertical !important;
+    overflow: hidden !important;
+  }
+  .card-action-controls-footer {
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    gap: 8px !important;
+    border-top: 1px solid var(--border-subtle);
+    padding-top: 10px;
+    margin-top: 6px;
+    min-width: 0;
+  }
   .card-action-buttons-row {
     gap: 11px !important;
   }
@@ -3051,6 +3075,62 @@ body {
   .card-action-buttons-row .card-btn-delete {
     padding: 7px 12px !important;
     min-height: 35px !important;
+  }
+}
+
+/* ==========================================================================
+   Mobile View (< 900px):
+   1. Title has natural height.
+   2. Applied cards: Single row (Applied pill on left, Inspect & Delete on right).
+   3. Discovered / Review / Archived cards: 2-row stacked layout (Status pill
+      on top, full 4 action buttons across the bottom with comfortable spacing).
+   ========================================================================== */
+@media (max-width: 899px) {
+  .job-card-title {
+    min-height: unset !important;
+  }
+  .card-action-controls-footer {
+    border-top: 1px solid var(--border-subtle);
+    padding-top: 10px;
+    margin-top: 6px;
+    min-width: 0;
+  }
+  /* Applied card footer: Single row */
+  .card-action-controls-footer.footer-applied {
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    gap: 8px !important;
+  }
+  /* Discovered / Review / Archived cards footer: Stacked 2-row layout exactly as before */
+  .card-action-controls-footer.footer-unapplied {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+    justify-content: flex-start !important;
+    gap: 8px !important;
+  }
+  .card-action-buttons-row {
+    display: flex !important;
+    align-items: center !important;
+    gap: 8px !important;
+    flex-wrap: wrap !important;
+  }
+  .card-action-buttons-row .card-btn-apply {
+    padding: 6px 12px !important;
+    font-size: 0.78rem !important;
+    min-height: 32px !important;
+  }
+  .card-action-buttons-row .card-btn-inspect {
+    padding: 6px 11px !important;
+    font-size: 0.78rem !important;
+    min-height: 32px !important;
+  }
+  .card-action-buttons-row .card-btn-mark,
+  .card-action-buttons-row .card-btn-delete {
+    padding: 6px 10px !important;
+    min-height: 32px !important;
   }
 }
 

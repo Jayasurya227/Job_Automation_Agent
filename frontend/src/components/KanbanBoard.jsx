@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { getJobApplyClassification, openExternalJobLink } from '../utils/jobClassification';
 import {
   Building2,
   MapPin,
@@ -440,16 +441,7 @@ function JobCard({ job, ranking, onSelect, onStatusChange, onDelete, onApply, on
   const edgeColor = isHighMatch ? 'var(--emerald)' : job.status === 'Applied' ? 'var(--emerald)' : 'var(--cyan)';
   const companyStyle = getCompanyStyle(job.company_name);
 
-  const isExplicit1Click = Boolean(
-    job.notes?.toLowerCase().includes('1-click') ||
-    job.notes?.toLowerCase().includes('easy apply')
-  );
-  const isExternalJob = !isExplicit1Click && Boolean(
-    job.notes?.toLowerCase().includes('external') ||
-    job.applications?.[0]?.status === 'EXTERNAL_SITE' ||
-    job.applications?.[0]?.notes?.toLowerCase().includes('external') ||
-    (job.job_url && !job.job_url.includes('naukri.com') && !job.job_url.includes('indeed.com'))
-  );
+  const { isExternal: isExternalJob, is1Click: isExplicit1Click } = getJobApplyClassification(job);
 
   return (
     <div
@@ -547,15 +539,18 @@ function JobCard({ job, ranking, onSelect, onStatusChange, onDelete, onApply, on
       </div>
 
       {/* Main Job Title */}
-      <h3 style={{
-        fontSize: '0.94rem',
-        fontWeight: 700,
-        color: 'var(--text-main)',
-        marginBottom: '8px',
-        lineHeight: 1.35,
-        letterSpacing: '-0.01em',
-        wordBreak: 'break-word',
-      }}>
+      <h3
+        className="job-card-title"
+        style={{
+          fontSize: '0.94rem',
+          fontWeight: 700,
+          color: 'var(--text-main)',
+          marginBottom: '8px',
+          lineHeight: 1.35,
+          letterSpacing: '-0.01em',
+          wordBreak: 'break-word',
+        }}
+      >
         {job.job_title}
       </h3>
 
@@ -599,17 +594,7 @@ function JobCard({ job, ranking, onSelect, onStatusChange, onDelete, onApply, on
 
       {/* Card Action Controls Footer */}
       <div
-        style={{
-          display: 'flex',
-          flexDirection: job.status === 'Applied' ? 'row' : 'column',
-          alignItems: job.status === 'Applied' ? 'center' : 'stretch',
-          justifyContent: job.status === 'Applied' ? 'space-between' : 'flex-start',
-          gap: '8px',
-          borderTop: '1px solid var(--border-subtle)',
-          paddingTop: '10px',
-          marginTop: '6px',
-          minWidth: 0,
-        }}
+        className={`card-action-controls-footer ${job.status === 'Applied' ? 'footer-applied' : 'footer-unapplied'}`}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Status Badge / Pill styled uniformly like Action Buttons */}
@@ -686,13 +671,21 @@ function JobCard({ job, ranking, onSelect, onStatusChange, onDelete, onApply, on
             <button
               onClick={(e) => {
                 e.stopPropagation();
+                if (isExternalJob) {
+                  // Direct open in new tab for external company postings
+                  if (job.job_url) {
+                    openExternalJobLink(job.job_url);
+                  }
+                  return;
+                }
+                // Native 1-Click Apply
                 if (onApply) {
                   onApply(job);
                 } else if (job.job_url) {
-                  window.open(job.job_url, '_blank', 'noopener,noreferrer');
+                  openExternalJobLink(job.job_url);
                 }
               }}
-              disabled={isApplying}
+              disabled={!isExternalJob && isApplying}
               className="btn btn-primary btn-sm card-btn-apply"
               style={{
                 padding: '6px 12px',

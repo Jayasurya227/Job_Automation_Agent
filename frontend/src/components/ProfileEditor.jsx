@@ -150,12 +150,14 @@ export default function ProfileEditor({ isOpen, onClose, notify, onProfileUpdate
     try {
       const cleanDailyCap = parseInt(profile?.preferences?.autopilot_max_daily_apps, 10);
       const cleanNotice = parseInt(profile?.preferences?.notice_period_days, 10);
+      const cleanManualLimit = parseInt(profile?.preferences?.manual_discovery_limit, 10);
       const safeProfile = {
         ...profile,
         preferences: {
           ...profile?.preferences,
           autopilot_max_daily_apps: (!isNaN(cleanDailyCap) && cleanDailyCap >= 1) ? cleanDailyCap : 7,
           notice_period_days: (!isNaN(cleanNotice) && cleanNotice >= 0) ? cleanNotice : 0,
+          manual_discovery_limit: (!isNaN(cleanManualLimit) && cleanManualLimit >= 5) ? Math.min(150, cleanManualLimit) : 20,
         }
       };
       const updated = await api.updateProfile(safeProfile);
@@ -1017,6 +1019,52 @@ export default function ProfileEditor({ isOpen, onClose, notify, onProfileUpdate
                             setProfile({
                               ...profile,
                               preferences: { ...profile.preferences, autopilot_max_daily_apps: finalVal }
+                            });
+                          }}
+                          style={{ fontSize: '0.82rem', padding: '6px 10px' }}
+                        />
+                      </div>
+
+                      <div>
+                        <label style={{ display: 'block', fontSize: '0.74rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                          Manual Discover Batch Limit
+                        </label>
+                        <input
+                          id="manual-discovery-limit-input"
+                          type="number"
+                          inputMode="numeric"
+                          className="form-input"
+                          min={5}
+                          max={150}
+                          value={profile.preferences?.manual_discovery_limit ?? ''}
+                          placeholder="20"
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            if (val === '') {
+                              setProfile({
+                                ...profile,
+                                preferences: { ...profile.preferences, manual_discovery_limit: '' }
+                              });
+                              return;
+                            }
+                            const num = parseInt(val, 10);
+                            setProfile({
+                              ...profile,
+                              preferences: {
+                                ...profile.preferences,
+                                manual_discovery_limit: isNaN(num) ? '' : Math.max(5, Math.min(150, num))
+                              }
+                            });
+                          }}
+                          onBlur={() => {
+                            const current = profile.preferences?.manual_discovery_limit;
+                            let finalVal = 20;
+                            if (current !== '' && current !== null && current !== undefined && !isNaN(Number(current))) {
+                              finalVal = Math.max(5, Math.min(150, Number(current)));
+                            }
+                            setProfile({
+                              ...profile,
+                              preferences: { ...profile.preferences, manual_discovery_limit: finalVal }
                             });
                           }}
                           style={{ fontSize: '0.82rem', padding: '6px 10px' }}

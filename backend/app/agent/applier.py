@@ -145,8 +145,8 @@ class EasyApplyFiller:
         if re.search(r"(years.*experience|experience.*years)", combined):
             ans = self._lookup_answer(label_text, allow_ai=True, field_type="number")
             return ("" if ans is None else ans), ("unanswered" if ans is None else "experience")
-        if re.search(r"(expected\s*(ctc|salary)|salary\s*expectation)", combined):
-            return self.profile.preferences.min_expected_salary or "Negotiable", "salary"
+        if re.search(r"(expected\s*(ctc|salary)|current\s*(ctc|salary)|salary\s*expectation|compensation)", combined):
+            return ("0" if (self.profile.application_answers.years_of_experience < 1) else (self.profile.preferences.min_expected_salary or "Negotiable")), "salary"
 
         # General / Screening questions -> Consult Q&A Bank with Claude Brain
         ans = self._lookup_answer(label_text, allow_ai=True, field_type="text")
@@ -708,6 +708,45 @@ class EasyApplyFiller:
                                 question_text = ln
                                 break
 
+                # Check if question relates to Salary / CTC / Compensation
+                is_salary_q = bool(re.search(
+                    r"(salary|ctc|compensation|current pay|expected pay|annual package|fixed pay|in hand|take home)",
+                    question_text,
+                    re.I
+                ))
+
+                # Fresher Role: If salary question detected, prioritize clicking "Skip" button or link
+                if is_salary_q:
+                    logger.info(f"[{tid}] 💼 Fresher Role: Salary/CTC question detected ('{question_text}'). Searching for 'Skip'...")
+                    skip_selectors = [
+                        "button:has-text('Skip')",
+                        "a:has-text('Skip')",
+                        "span:has-text('Skip')",
+                        ".skip-btn",
+                        ".skipMsg",
+                        ".skip-cta",
+                        "[class*='skip']",
+                    ]
+                    skip_el = None
+                    for s_sel in skip_selectors:
+                        cand = cb.query_selector(s_sel)
+                        if cand and cand.is_visible():
+                            skip_el = cand
+                            break
+
+                    if skip_el:
+                        try:
+                            s_box = skip_el.bounding_box()
+                            if s_box:
+                                page.mouse.click(s_box["x"] + s_box["width"] / 2, s_box["y"] + s_box["height"] / 2)
+                            else:
+                                skip_el.click()
+                            logger.info(f"[{tid}] ⚡ Fresher Role: Clicked 'Skip' on salary question successfully!")
+                            page.wait_for_timeout(2000)
+                            continue
+                        except Exception as skip_err:
+                            logger.warning(f"[{tid}] Skip click notice: {skip_err}")
+
                 # 1. Radio / pill options (MCQs)
                 labels = cb.query_selector_all("label.ssrc__label, .ssrc__radio-btn-container, [role='radio']")
                 chosen = None
@@ -745,6 +784,15 @@ class EasyApplyFiller:
                                     chosen = l
                                     break
 
+                    # 1b-2. Fresher salary preference: Check for Skip/Not Disclosed/Fresher options
+                    if is_salary_q and not chosen:
+                        for l in labels:
+                            lt = (l.inner_text() or "").strip().lower()
+                            if any(sk in lt for sk in ["skip", "not disclosed", "fresher", "negotiable", "0 - 1 lakh", "0-3 lakh", "0 lakh"]):
+                                chosen = l
+                                logger.info(f"[{tid}] ⚡ Fresher Role: Selected option '{lt}' for salary question")
+                                break
+
                     # 1c. Heuristic candidate preference fallback if LLM returned None
                     if not chosen:
                         for pref in ["0-1 years", "1-2 years", "yes", "immediate", "15 days", "15 days or less"]:
@@ -777,7 +825,10 @@ class EasyApplyFiller:
                         continue
                     f_type = inp.get_attribute("type") or ("number" if "number" in (inp.get_attribute("inputmode") or "") else "text")
                     val = self._lookup_answer(label_text=question_text or "Candidate Screening Response", allow_ai=True, field_type=f_type)
-                    fill_val = val if val else ("1" if f_type == "number" else "Yes, proficient and experienced.")
+                    if is_salary_q:
+                        fill_val = "0" if f_type == "number" else "Fresher / Negotiable"
+                    else:
+                        fill_val = val if val else ("1" if f_type == "number" else "Yes, proficient and experienced.")
                     val_str = str(fill_val)
                     try:
                         inp.click()

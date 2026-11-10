@@ -105,6 +105,30 @@ def get_portal_timeline_slot(dt: Optional[datetime] = None) -> Dict[str, Any]:
             status_message = f"💤 Agent Resting (Next scan at {next_time} • in {remaining_minutes}m)"
             next_event_label = f"Next search at {next_time} (in {remaining_minutes}m)"
 
+    # Dynamically resolve active and next rotating role for current slot (Round-Robin Allocation)
+    active_role = None
+    next_role = None
+    try:
+        profile = load_profile()
+        target_roles = getattr(profile.preferences, "target_roles", []) or []
+        if target_roles:
+            if active_slot_id > 0:
+                active_role = target_roles[(active_slot_id - 1) % len(target_roles)]
+                next_role = target_roles[active_slot_id % len(target_roles)]
+            else:
+                next_role = target_roles[0]
+                active_role = None
+
+            if phase == "work":
+                status_message = f"🚀 Agent Active: Scanning Naukri for '{active_role}'..."
+            elif phase == "break":
+                status_message = f"💤 Agent Resting (Next: '{next_role}' at {next_time} • in {remaining_minutes}m)"
+            elif phase == "closed":
+                status_message = f"🌙 Office Hours Closed (Resumes 9:00 AM with '{next_role}')"
+    except Exception:
+        active_role = None
+        next_role = None
+
     return {
         "current_portal": "naukri",
         "portal_label": "Naukri.com",
@@ -113,6 +137,8 @@ def get_portal_timeline_slot(dt: Optional[datetime] = None) -> Dict[str, Any]:
         "is_office_hours": is_office_hours,
         "slot_id": active_slot_id,
         "slot_label": slot_label,
+        "active_role": active_role,
+        "next_role": next_role,
         "status_message": status_message,
         "next_event_label": next_event_label,
         "remaining_minutes": remaining_minutes,
@@ -335,22 +361,32 @@ class AutoPilotScheduler:
                     logger.info(f"Daily safety quota already reached ({self._daily_applications_count}/{max_daily}). Auto-apply paused for today; jobs remain queued for tomorrow.")
                     emit_event("autopilot", "quota_reached", {"applied_today": self._daily_applications_count, "max_daily": max_daily})
 
-                # 3. Step 2: Discover fresh jobs for the scheduled portal (new jobs queue in Review when quota full)
-                search_term = target_roles[0] if target_roles else "AI Engineer"
+                # 3. Step 2: Discover fresh jobs for the scheduled portal (Dynamic Slot Rotation)
+                slot_id = timeline_slot.get("slot_id") or 1
+                if target_roles and slot_id > 0:
+                    slot_idx = (slot_id - 1) % len(target_roles)
+                    # Prioritize the active slot's role first in rotation
+                    rotated_roles = [target_roles[slot_idx]] + [r for i, r in enumerate(target_roles) if i != slot_idx]
+                else:
+                    rotated_roles = target_roles
+
+                search_term = rotated_roles[0] if rotated_roles else "AI Engineer"
                 search_loc = locations[0] if locations else "Hyderabad"
+
+                logger.info(f"🔄 Slot #{slot_id} Domain Rotation: Active priority role is '{search_term}' (Rotation: {rotated_roles[:3]}).")
 
                 exp_level = getattr(prefs, 'experience_level', '0-1')
                 report = await discover_and_ingest(
                     search_term=search_term,
-                    search_terms=target_roles[:3] if target_roles else None,
+                    search_terms=rotated_roles[:3] if rotated_roles else None,
                     location=search_loc,
                     locations=locations[:2] if locations else None,
                     portals=[active_portal],
-                    results_wanted=15,
+                    results_wanted=30,
                     freshness_days=freshness,
                     experience_level=exp_level,
                     min_match_score=READY_MATCH_THRESHOLD,
-                    max_jobs_to_process=12,
+                    max_jobs_to_process=None,
                 )
 
                 # 4. Sync application counts after discovery run

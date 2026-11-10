@@ -64,8 +64,8 @@ RULE_PATTERNS: List[RulePattern] = [
         "category": "Preferences"
     },
     {
-        "pattern": r"(expected salary|expected ctc|salary expectation|compensation requirement)",
-        "handler": lambda p: p.preferences.min_expected_salary or "Negotiable / Standard Industry CTC",
+        "pattern": r"(expected salary|expected ctc|salary expectation|compensation requirement|compensation|annual package|fixed pay|in hand|take home)",
+        "handler": lambda p: "Skip" if p.application_answers.years_of_experience < 1 else (p.preferences.min_expected_salary or "Negotiable / Standard Industry CTC"),
         "category": "Compensation"
     },
     {
@@ -90,7 +90,7 @@ RULE_PATTERNS: List[RulePattern] = [
     },
     {
         "pattern": r"(current ctc|current salary|present salary|current compensation)",
-        "handler": lambda p: "Fresher / 0" if p.application_answers.years_of_experience < 1 else "Negotiable",
+        "handler": lambda p: "Skip" if p.application_answers.years_of_experience < 1 else "Negotiable",
         "category": "Compensation"
     },
     {
@@ -260,7 +260,9 @@ def generate_ai_screening_answer(
         "   Respond with ONLY 'Yes' or 'No'.\n"
         "4. If it is an open-ended question or textarea:\n"
         "   Provide a concise, direct, professional answer in first person (1-2 sentences max).\n"
-        "5. Output PLAIN TEXT ONLY. Never include markdown, quotes, or preambles."
+        "5. If the question asks for salary, compensation, or CTC and candidate is a fresher:\n"
+        "   If 'Skip', 'Not Disclosed', 'Fresher', or 'Negotiable' is an option, select that option. If numeric number is mandatory, output '0'.\n"
+        "6. Output PLAIN TEXT ONLY. Never include markdown, quotes, or preambles."
     )
 
     prompt_parts = [

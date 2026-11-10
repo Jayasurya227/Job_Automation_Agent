@@ -1,4 +1,5 @@
 import React from 'react';
+import { getJobApplyClassification, openExternalJobLink } from '../utils/jobClassification';
 import { 
   Building2, 
   MapPin, 
@@ -128,6 +129,33 @@ export default function TableView({
                     {/* Actions */}
                     <td style={{ padding: '12px 16px', textAlign: 'right', whiteSpace: 'nowrap' }} onClick={(e) => e.stopPropagation()}>
                       <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                        {job.status !== 'Applied' && job.job_url && (
+                          <button
+                            onClick={() => {
+                              const { isExternal } = getJobApplyClassification(job);
+                              if (isExternal) {
+                                openExternalJobLink(job.job_url);
+                              } else if (onApplyJob) {
+                                onApplyJob(job);
+                              } else {
+                                openExternalJobLink(job.job_url);
+                              }
+                            }}
+                            className="btn btn-primary btn-sm"
+                            style={{ padding: '4px 10px', fontSize: '0.75rem', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                            title={getJobApplyClassification(job).isExternal ? "Open external company site in new tab" : "Start 1-Click Apply"}
+                          >
+                            {getJobApplyClassification(job).isExternal ? (
+                              <>
+                                <ExternalLink size={12} /> Apply ↗
+                              </>
+                            ) : (
+                              <>
+                                <Send size={12} /> Apply
+                              </>
+                            )}
+                          </button>
+                        )}
                         <button
                           onClick={() => onSelectJob(job.id)}
                           className="btn btn-secondary btn-sm"

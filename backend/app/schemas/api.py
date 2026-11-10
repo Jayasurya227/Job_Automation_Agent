@@ -109,11 +109,11 @@ class DiscoverJobsRequest(BaseModel):
     location: Optional[str] = Field(default=None, description="Target location or 'Remote'")
     locations: Optional[List[str]] = Field(default=None, description="List of target locations to scrape dynamically")
     portals: Optional[List[str]] = Field(default=["naukri"], description="List of job portals to scrape")
-    results_wanted: int = Field(default=8, ge=1, le=25, description="Number of results to query per portal")
+    results_wanted: int = Field(default=25, ge=1, le=150, description="Number of results to query per portal")
     freshness_days: Optional[int] = Field(default=1, ge=0, le=30, description="Posting freshness in days (1 = last 24 hours)")
     experience_level: Optional[str] = Field(default=None, description="Experience level filter (e.g. '0-1', '1-2', '2-4', 'all')")
     min_match_score: int = Field(default=READY_MATCH_THRESHOLD, ge=0, le=100, description="Minimum match score to mark job as Ready")
-    max_process: int = Field(default=5, ge=1, le=15, description="Maximum new jobs to score and ingest in this run")
+    max_process: Optional[int] = Field(default=None, ge=1, le=150, description="Maximum new jobs to score and ingest in this run")
 
 class ApplyWorkflowRequest(BaseModel):
     """Payload to initiate assisted or autonomous job application workflow."""

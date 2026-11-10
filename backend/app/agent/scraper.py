@@ -13,6 +13,7 @@ import json
 import random
 import logging
 import asyncio
+import urllib.parse
 from pathlib import Path
 from typing import List, Optional, Dict, Any, Tuple
 from pydantic import BaseModel, Field
@@ -25,6 +26,7 @@ if sys.platform == "win32":
         pass
 
 from app.agent.browser import browser_manager
+from app.agent.query_expander import expand_multiple_roles
 from app.db.session import SessionLocal
 from app.db.crud import job_exists
 from app.utils.event_bus import emit_event
@@ -154,6 +156,7 @@ def _run_jobspy_sync(
     hours_old: int = 72,
     experience_level: Optional[str] = None,
     target_roles: Optional[List[str]] = None,
+    combined_query: Optional[str] = None,
 ) -> List[DiscoveredJob]:
     """
     Synchronous wrapper to execute JobSpy scrape_jobs safely inside a worker thread.
@@ -202,11 +205,14 @@ def _run_jobspy_sync(
     # Robust batch size: Request at least 15 jobs so Indeed returns a full page rather than sponsored crumbs
     target_results = max(15, min(results_wanted, 25))
 
+    # Option B: Use combined query with OR for broad semantic coverage on Indeed
+    effective_query = combined_query.replace(", ", " OR ") if combined_query else search_term
+
     try:
-        logger.info(f"Running JobSpy for '{search_term}' in '{effective_location}' across {valid_sites} (target: {target_results}, country: {country_indeed}, exp: {experience_level})...")
+        logger.info(f"Running JobSpy for '{effective_query}' in '{effective_location}' across {valid_sites} (target: {target_results}, country: {country_indeed}, exp: {experience_level})...")
         df = scrape_jobs(
             site_name=valid_sites,
-            search_term=search_term,
+            search_term=effective_query,
             location=effective_location,
             results_wanted=target_results,
             hours_old=hours_old,
@@ -415,6 +421,114 @@ def _fetch_naukri_full_description_sync(page, job_url: str, fallback_desc: str =
         return fallback_desc, "1-Click", False, False
 
 
+def build_naukri_search_url(
+    search_term: str,
+    location: str = "Hyderabad",
+    page_number: int = 1,
+    combined_query: Optional[str] = None,
+    freshness_days: Optional[int] = None,
+    experience_level: Optional[str] = None,
+) -> str:
+    """
+    Constructs a robust, canonical multi-page search URL for Naukri.com.
+    Handles:
+    - Clean slugs for keyword and location.
+    - Page 1 vs Page N slug extensions (e.g. `/{slug}` vs `/{slug}-{page_number}`).
+    - Dynamic query parameters: combined expanded keywords (k=...), freshness, experience filters, pageNo.
+    - 0% Hardcoding; adapts dynamically to any role, location, or page.
+    """
+    clean_keyword = re.sub(r"[^a-zA-Z0-9\s]", "", search_term).strip().replace(" ", "-").lower()
+    clean_loc = re.sub(r"[^a-zA-Z0-9\s]", "", location).strip().replace(" ", "-").lower()
+    
+    if clean_loc in ["remote", "hybrid", "india", ""]:
+        base_slug = f"{clean_keyword}-jobs"
+    else:
+        base_slug = f"{clean_keyword}-jobs-in-{clean_loc}"
+        
+    if page_number > 1:
+        base_url = f"https://www.naukri.com/{base_slug}-{page_number}"
+    else:
+        base_url = f"https://www.naukri.com/{base_slug}"
+
+    params = []
+    if combined_query and combined_query.strip():
+        encoded_k = urllib.parse.quote(combined_query.strip())
+        params.append(f"k={encoded_k}")
+
+    # Respect user freshness settings (0 = Any Time, >0 = specific days)
+    if freshness_days is not None and int(freshness_days) > 0:
+        params.append(f"freshness={int(freshness_days)}")
+
+    if experience_level == "0-1":
+        params.extend(["experience=0", "experience=1"])
+    elif experience_level == "1-2":
+        params.extend(["experience=1", "experience=2"])
+    elif experience_level == "2-4":
+        params.extend(["experience=2", "experience=3", "experience=4"])
+    elif experience_level == "0":
+        params.append("experience=0")
+
+    if page_number > 1:
+        params.append(f"pageNo={page_number}")
+
+    query_str = f"?{'&'.join(params)}" if params else ""
+    return f"{base_url}{query_str}"
+
+
+def check_naukri_end_of_pages(page, raw_cards_count: int) -> Tuple[bool, str]:
+    """
+    Detects whether the current Naukri page is the terminal (end) page.
+    Returns (is_end, reason).
+    Checks:
+    1. 0 raw cards found on the page.
+    2. 'No jobs found' / empty state banners or zero match text.
+    3. Pagination container indicates current page is the last page.
+    """
+    if raw_cards_count == 0:
+        return True, "Zero job cards detected on page."
+
+    try:
+        # Check for empty search results or '0 jobs' banners
+        empty_selectors = [
+            ".no-result",
+            ".zero-results",
+            ".no-tuple",
+            ".empty-state",
+            "div:has-text('No jobs found')",
+            "div:has-text('0 jobs found')",
+            "span:has-text('0 jobs found')",
+            "div:has-text('We couldn\'t find any matches')",
+            "div:has-text('No results found')",
+        ]
+        for sel in empty_selectors:
+            el = page.query_selector(sel)
+            if el and el.is_visible():
+                return True, f"Empty state indicator matched: {sel}"
+
+        # Check total jobs count from header e.g. "1 - 20 of 35 Jobs"
+        count_elem = page.query_selector(".count-string, .styles_count-string__fhmba, .search-result-header")
+        if count_elem:
+            count_text = count_elem.inner_text().strip()
+            # Parse 'X - Y of Z' pattern
+            match = re.search(r"\b(\d+)\s*-\s*(\d+)\s+of\s+(\d+)\b", count_text, re.IGNORECASE)
+            if match:
+                end_idx = int(match.group(2))
+                total_cnt = int(match.group(3))
+                if end_idx >= total_cnt:
+                    return True, f"Reached end of results ({end_idx}/{total_cnt} jobs displayed)."
+
+        # Check pagination Next button disabled
+        next_btn = page.query_selector("a.next, .pagination-next, a[class*='page-nav']:has-text('Next')")
+        if next_btn:
+            classes = next_btn.get_attribute("class") or ""
+            if "disabled" in classes or next_btn.get_attribute("disabled") is not None:
+                return True, "Pagination Next button is disabled."
+    except Exception:
+        pass
+
+    return False, "More pages potentially available."
+
+
 def _scrape_naukri_sync(
     search_term: str,
     location: str = "India",
@@ -422,6 +536,8 @@ def _scrape_naukri_sync(
     freshness_days: int = 1,
     experience_level: Optional[str] = None,
     target_roles: Optional[List[str]] = None,
+    combined_query: Optional[str] = None,
+    max_pages: int = 5,
 ) -> List[DiscoveredJob]:
     """
     Production-Standard Synchronous Stealth Scraper for Naukri.com.
@@ -434,35 +550,20 @@ def _scrape_naukri_sync(
     from app.agent.browser import DEFAULT_SESSION_DIR, sanitize_session_preferences, DEFAULT_USER_AGENT
     from app.agent.stealth import get_stealth_chromium_args, build_stealth_js, check_bot_challenge
 
-    # Clean keyword and location for URL
-    clean_keyword = re.sub(r"[^a-zA-Z0-9\s]", "", search_term).strip().replace(" ", "-").lower()
-    clean_loc = re.sub(r"[^a-zA-Z0-9\s]", "", location).strip().replace(" ", "-").lower()
-    if clean_loc in ["remote", "hybrid", "india", ""]:
-        base_url = f"https://www.naukri.com/{clean_keyword}-jobs"
-    else:
-        base_url = f"https://www.naukri.com/{clean_keyword}-jobs-in-{clean_loc}"
-
     # Determine effective experience filter from profile if not provided
     if experience_level is None:
         prefs = load_candidate_preferences()
         experience_level = prefs.get("experience_level", "0-1")
 
-    # Build query parameters (freshness + experience filters)
-    params = []
-    if freshness_days and freshness_days > 0:
-        params.append(f"freshness={freshness_days}")
-
-    if experience_level == "0-1":
-        params.extend(["experience=0", "experience=1"])
-    elif experience_level == "1-2":
-        params.extend(["experience=1", "experience=2"])
-    elif experience_level == "2-4":
-        params.extend(["experience=2", "experience=3", "experience=4"])
-    elif experience_level == "0":
-        params.append("experience=0")
-
-    query_str = f"?{'&'.join(params)}" if params else ""
-    url = f"{base_url}{query_str}"
+    # Build initial Page 1 URL using dedicated multi-page generator
+    url = build_naukri_search_url(
+        search_term=search_term,
+        location=location,
+        page_number=1,
+        combined_query=combined_query,
+        freshness_days=freshness_days,
+        experience_level=experience_level,
+    )
 
     session_dir = Path(DEFAULT_SESSION_DIR)
     session_dir.mkdir(parents=True, exist_ok=True)
@@ -510,23 +611,6 @@ def _scrape_naukri_sync(
         context.add_init_script(build_stealth_js())
         page = context.pages[0] if context.pages else context.new_page()
 
-        try:
-            page.goto(url, wait_until="domcontentloaded", timeout=30000)
-        except Exception as goto_err:
-            logger.warning(f"Could not reach Naukri search URL: {goto_err}")
-            return []
-
-        # Human-like pause and lazy-load scroll
-        time.sleep(random.uniform(2.0, 3.5))
-        for _ in range(3):
-            page.mouse.wheel(0, 700)
-            time.sleep(random.uniform(0.8, 1.4))
-
-        # Check bot challenge
-        challenge = check_bot_challenge(page)
-        if challenge:
-            logger.warning(f"Naukri bot challenge detected on search listing: {challenge}")
-
         card_selectors = [
             ".srp-jobtuple-wrapper",
             "article.jobTuple",
@@ -534,69 +618,117 @@ def _scrape_naukri_sync(
             "[class*='srp-jobtuple']",
         ]
 
-        card_selector = None
-        for sel in card_selectors:
-            elements = page.query_selector_all(sel)
-            if elements and len(elements) > 0:
-                card_selector = sel
-                break
-
-        if not card_selector:
-            logger.info("No Naukri card selector matched. Page layout may have changed or required captcha.")
-            return []
-
-        cards = page.query_selector_all(card_selector)
-        logger.info(f"Found {len(cards)} raw job cards on Naukri.")
-
+        seen_job_urls = set()
         effective_roles = target_roles or [search_term]
 
-        for card in cards[: max(results_wanted * 2, 15)]:
+        # Multi-Page Traversal Loop (Pages 1 to max_pages) with Live Real-time SSE Progress
+        for page_no in range(1, max_pages + 1):
+            page_url = build_naukri_search_url(
+                search_term=search_term,
+                location=location,
+                page_number=page_no,
+                combined_query=combined_query,
+                freshness_days=freshness_days,
+                experience_level=experience_level,
+            )
+
+            logger.info(f"Navigating to Naukri Page {page_no}/{max_pages}: {page_url}")
+            emit_event("discovery", "discovery_progress", {
+                "stage": "page_scanning",
+                "page": page_no,
+                "total_pages": max_pages,
+                "message": f"🔍 Scanning Page {page_no}/{max_pages} on Naukri for '{search_term}'..."
+            })
+
             try:
-                title_elem = card.query_selector("a.title") or card.query_selector(".title")
-                title = title_elem.inner_text().strip() if title_elem else ""
-                job_url = title_elem.get_attribute("href") if title_elem else ""
+                page.goto(page_url, wait_until="domcontentloaded", timeout=30000)
+            except Exception as goto_err:
+                logger.warning(f"Could not reach Naukri page {page_no}: {goto_err}")
+                break
 
-                # Strict Title-Related Relevance Filter (Step 1)
-                if not is_title_relevant(title, effective_roles):
-                    continue
+            # Human-like pause and lazy-load scroll
+            time.sleep(random.uniform(1.8, 2.8))
+            for _ in range(2):
+                page.mouse.wheel(0, 650)
+                time.sleep(random.uniform(0.7, 1.2))
 
-                comp_elem = card.query_selector("a.comp-name") or card.query_selector(".subTitle") or card.query_selector("[class*='comp-name']")
-                company = comp_elem.inner_text().strip() if comp_elem else ""
+            # Check bot challenge
+            challenge = check_bot_challenge(page)
+            if challenge:
+                logger.warning(f"Naukri bot challenge detected on search listing page {page_no}: {challenge}")
 
-                loc_elem = card.query_selector(".loc-wrap") or card.query_selector(".location") or card.query_selector("[class*='loc-wrap']")
-                loc = loc_elem.inner_text().strip() if loc_elem else location
+            card_selector = None
+            for sel in card_selectors:
+                elements = page.query_selector_all(sel)
+                if elements and len(elements) > 0:
+                    card_selector = sel
+                    break
 
-                desc_elem = card.query_selector(".job-desc") or card.query_selector(".job-description") or card.query_selector("[class*='job-desc']")
-                desc = desc_elem.inner_text().strip() if desc_elem else ""
+            if not card_selector:
+                logger.info(f"No Naukri card selector matched on page {page_no}. Reached terminal page or empty layout.")
+                break
 
-                sal_elem = card.query_selector(".sal-wrap") or card.query_selector(".salary") or card.query_selector("[class*='sal-wrap']")
-                salary_str = sal_elem.inner_text().strip() if sal_elem else ""
+            cards = page.query_selector_all(card_selector)
+            logger.info(f"Page {page_no}/{max_pages}: Found {len(cards)} raw cards on Naukri.")
 
-                date_elem = (
-                    card.query_selector(".job-post-day") or
-                    card.query_selector("span.date") or
-                    card.query_selector(".type") or
-                    card.query_selector(".tuple-sub-title")
-                )
-                date_posted = date_elem.inner_text().strip() if date_elem else "Past 24 Hours"
+            # Check terminal end of pages boundary
+            is_end, end_reason = check_naukri_end_of_pages(page, len(cards))
 
-                exp_elem = (
-                    card.query_selector(".exp-wrap") or
-                    card.query_selector("span.expwdth") or
-                    card.query_selector(".experience")
-                )
-                card_exp = exp_elem.inner_text().strip() if exp_elem else ""
+            page_cards_added = 0
+            for card in cards:
+                try:
+                    title_elem = card.query_selector("a.title") or card.query_selector(".title")
+                    title = title_elem.inner_text().strip() if title_elem else ""
+                    job_url = title_elem.get_attribute("href") if title_elem else ""
 
-                if experience_level in ["0-1", "0"] and card_exp:
-                    senior_match = re.search(r"\b([3-9]|\d{2})\s*-\s*\d+\s*(?:Yrs|Years?)", card_exp, re.IGNORECASE)
-                    if senior_match:
-                        logger.debug(f"Skipping senior job card '{title}' requiring '{card_exp}'")
+                    if not title or not job_url:
                         continue
 
-                if title and company and job_url:
                     if not job_url.startswith("http"):
                         job_url = "https://www.naukri.com" + job_url
 
+                    # Avoid duplicate URLs within the same search session
+                    if job_url in seen_job_urls:
+                        continue
+
+                    # Strict Title-Related Relevance Filter (Step 1)
+                    if not is_title_relevant(title, effective_roles):
+                        continue
+
+                    comp_elem = card.query_selector("a.comp-name") or card.query_selector(".subTitle") or card.query_selector("[class*='comp-name']")
+                    company = comp_elem.inner_text().strip() if comp_elem else ""
+
+                    loc_elem = card.query_selector(".loc-wrap") or card.query_selector(".location") or card.query_selector("[class*='loc-wrap']")
+                    loc = loc_elem.inner_text().strip() if loc_elem else location
+
+                    desc_elem = card.query_selector(".job-desc") or card.query_selector(".job-description") or card.query_selector("[class*='job-desc']")
+                    desc = desc_elem.inner_text().strip() if desc_elem else ""
+
+                    sal_elem = card.query_selector(".sal-wrap") or card.query_selector(".salary") or card.query_selector("[class*='sal-wrap']")
+                    salary_str = sal_elem.inner_text().strip() if sal_elem else ""
+
+                    date_elem = (
+                        card.query_selector(".job-post-day") or
+                        card.query_selector("span.date") or
+                        card.query_selector(".type") or
+                        card.query_selector(".tuple-sub-title")
+                    )
+                    date_posted = date_elem.inner_text().strip() if date_elem else "Past 24 Hours"
+
+                    exp_elem = (
+                        card.query_selector(".exp-wrap") or
+                        card.query_selector("span.expwdth") or
+                        card.query_selector(".experience")
+                    )
+                    card_exp = exp_elem.inner_text().strip() if exp_elem else ""
+
+                    if experience_level in ["0-1", "0"] and card_exp:
+                        senior_match = re.search(r"\b([3-9]|\d{2})\s*-\s*\d+\s*(?:Yrs|Years?)", card_exp, re.IGNORECASE)
+                        if senior_match:
+                            logger.debug(f"Skipping senior job card '{title}' requiring '{card_exp}'")
+                            continue
+
+                    seen_job_urls.add(job_url)
                     raw_jobs.append(
                         DiscoveredJob(
                             title=title,
@@ -609,9 +741,28 @@ def _scrape_naukri_sync(
                             date_posted=date_posted,
                         )
                     )
-            except Exception as card_err:
-                logger.debug(f"Error parsing single Naukri card: {card_err}")
-                continue
+                    page_cards_added += 1
+                except Exception as card_err:
+                    logger.debug(f"Error parsing single Naukri card: {card_err}")
+                    continue
+
+            # Emit live SSE progress event after completing current page
+            emit_event("discovery", "discovery_progress", {
+                "stage": "page_scanned",
+                "page": page_no,
+                "total_pages": max_pages,
+                "page_jobs_added": page_cards_added,
+                "total_collected": len(raw_jobs),
+                "message": f"🔍 Page {page_no}/{max_pages} scanned... ({len(raw_jobs)} relevant jobs found across pages)"
+            })
+
+            if is_end:
+                logger.info(f"Stopping pagination at page {page_no}: {end_reason}")
+                break
+
+            # Natural human-like pause between page transitions (2.0s - 3.2s)
+            if page_no < max_pages:
+                time.sleep(random.uniform(2.0, 3.2))
 
         # Step 1: Filter out duplicates against SQLite so we only deep-fetch brand new jobs
         db = SessionLocal()
@@ -695,6 +846,8 @@ async def scrape_naukri_playwright(
     freshness_days: int = 1,
     experience_level: Optional[str] = None,
     target_roles: Optional[List[str]] = None,
+    combined_query: Optional[str] = None,
+    max_pages: int = 5,
 ) -> List[DiscoveredJob]:
     """
     Async interface for the Naukri stealth scraper.
@@ -709,6 +862,8 @@ async def scrape_naukri_playwright(
         freshness_days=freshness_days,
         experience_level=experience_level,
         target_roles=target_roles,
+        combined_query=combined_query,
+        max_pages=max_pages,
     )
 
 
@@ -752,6 +907,23 @@ async def discover_jobs(
     # Cap to top 3 roles per discovery cycle for bot safety & human pacing
     roles_to_search = roles_to_search[:3]
 
+    # Dynamic Universal Query Expansion & Domain Clustering (Step 2 Hybrid Upgrade)
+    clusters = expand_multiple_roles(roles_to_search)
+    all_expanded_targets = []
+    cluster_by_role = {}
+    for c in clusters:
+        all_expanded_targets.append(c.primary_role)
+        all_expanded_targets.extend(c.search_synonyms)
+        cluster_by_role[c.primary_role.lower()] = c
+
+    # Deduplicate expanded targets preserving order
+    seen_expanded = set()
+    deduped_targets = []
+    for t in all_expanded_targets:
+        if t.lower() not in seen_expanded:
+            seen_expanded.add(t.lower())
+            deduped_targets.append(t)
+
     # 2. Determine locations to search dynamically based on saved preferences
     if locations and len(locations) > 0:
         locs_to_search = [l.strip() for l in locations if l and l.strip()]
@@ -788,10 +960,13 @@ async def discover_jobs(
 
     for pair_idx, (current_role, current_loc) in enumerate(search_pairs):
         if pair_idx > 0:
-            # Human-like delay between searching different queries
-            await asyncio.sleep(2.0)
+            # Human-like sequential pacing delay between different domain queries (Option A)
+            await asyncio.sleep(random.uniform(2.5, 4.0))
 
-        logger.info(f"Scanning portals in parallel for [{pair_idx+1}/{len(search_pairs)}]: '{current_role}' in '{current_loc}'...")
+        current_cluster = cluster_by_role.get(current_role.lower())
+        combined_q = current_cluster.combined_query if current_cluster else current_role
+
+        logger.info(f"Scanning portals in parallel for [{pair_idx+1}/{len(search_pairs)}]: '{current_role}' (Expanded: '{combined_q}') in '{current_loc}'...")
 
         # Concurrent parallel crawl tasks for current search pair
         crawl_tasks = []
@@ -823,7 +998,8 @@ async def discover_jobs(
                 country=country_target,
                 hours_old=hours_old,
                 experience_level=effective_exp,
-                target_roles=roles_to_search,
+                target_roles=deduped_targets,
+                combined_query=combined_q,
             ))
             task_names.append("Indeed/JobSpy")
 
@@ -835,7 +1011,9 @@ async def discover_jobs(
                 results_wanted=per_query_results,
                 freshness_days=effective_freshness,
                 experience_level=effective_exp,
-                target_roles=roles_to_search,
+                target_roles=deduped_targets,
+                combined_query=combined_q,
+                max_pages=5,
             ))
             task_names.append("Naukri")
 
@@ -848,8 +1026,8 @@ async def discover_jobs(
                 elif isinstance(res, list):
                     all_jobs.extend(res)
 
-    # Strict Title-Related Relevance Filter (Step 1)
-    all_jobs = [j for j in all_jobs if is_title_relevant(j.title, roles_to_search)]
+    # Strict Title-Related Relevance Filter accepting all expanded synonyms
+    all_jobs = [j for j in all_jobs if is_title_relevant(j.title, deduped_targets)]
 
     # 3. Deduplication against SQLite Database
     if not deduplicate:

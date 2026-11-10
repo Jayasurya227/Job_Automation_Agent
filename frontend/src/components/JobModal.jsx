@@ -20,6 +20,7 @@ import {
   Zap
 } from 'lucide-react';
 import { api } from '../api';
+import { getJobApplyClassification, openExternalJobLink } from '../utils/jobClassification';
 
 export default function JobModal({ 
   jobId, 
@@ -69,16 +70,7 @@ export default function JobModal({
     }
   };
 
-  const isExplicit1Click = Boolean(
-    job?.notes?.toLowerCase().includes('1-click') ||
-    job?.notes?.toLowerCase().includes('easy apply')
-  );
-  const isExternalJob = !isExplicit1Click && Boolean(
-    job?.notes?.toLowerCase().includes('external') ||
-    job?.applications?.[0]?.status === 'EXTERNAL_SITE' ||
-    job?.applications?.[0]?.notes?.toLowerCase().includes('external') ||
-    (job?.job_url && !job.job_url.includes('naukri.com') && !job.job_url.includes('indeed.com'))
-  );
+  const { isExternal: isExternalJob, is1Click: isExplicit1Click } = getJobApplyClassification(job);
 
   return (
     <div 
@@ -342,7 +334,43 @@ export default function JobModal({
         </div>
 
         {/* Modal Footer */}
-        <div className="job-modal-footer">
+        <div className="job-modal-footer" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            {job?.job_url && job?.status !== 'Applied' && (
+              <button
+                type="button"
+                className="btn btn-primary btn-sm"
+                onClick={() => {
+                  if (isExternalJob) {
+                    openExternalJobLink(job.job_url);
+                  } else if (onApply) {
+                    onClose();
+                    onApply(job);
+                  } else {
+                    openExternalJobLink(job.job_url);
+                  }
+                }}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  fontWeight: 600,
+                  fontSize: '0.82rem',
+                  padding: '7px 14px'
+                }}
+              >
+                {isExternalJob ? (
+                  <>
+                    <ExternalLink size={14} /> Open External Site ↗
+                  </>
+                ) : (
+                  <>
+                    <Zap size={14} /> 1-Click Apply
+                  </>
+                )}
+              </button>
+            )}
+          </div>
           <button 
             type="button" 
             className="btn btn-secondary btn-sm job-modal-close-btn" 

@@ -1,0 +1,90 @@
+{
+  "ai engineer": {
+    "primary_role": "AI Engineer",
+    "domain_category": "ai_ml",
+    "search_synonyms": [
+      "Machine Learning Engineer",
+      "GenAI Engineer",
+      "LLM Engineer",
+      "AI/ML Engineer"
+    ],
+    "combined_query": "AI Engineer, Machine Learning Engineer, GenAI Engineer"
+  },
+  "react developer": {
+    "primary_role": "React Developer",
+    "domain_category": "frontend",
+    "search_synonyms": [
+      "Frontend Developer",
+      "React.js Developer",
+      "Frontend Engineer",
+      "UI Developer"
+    ],
+    "combined_query": "React Developer, Frontend Developer, React.js"
+  },
+  "data analyst": {
+    "primary_role": "Data Analyst",
+    "domain_category": "data_analytics",
+    "search_synonyms": [
+      "Business Analyst",
+      "Data Analytics Specialist",
+      "Junior Data Analyst",
+      "Reporting Analyst"
+    ],
+    "combined_query": "Data Analyst, Business Intelligence Analyst, Reporting Analyst"
+  },
+  "devops engineer": {
+    "primary_role": "DevOps Engineer",
+    "domain_category": "cloud_devops",
+    "search_synonyms": [
+      "Site Reliability Engineer",
+      "Platform Engineer",
+      "Cloud Engineer",
+      "Build and Release Engineer"
+    ],
+    "combined_query": "DevOps Engineer, Site Reliability Engineer, Platform Engineer"
+  },
+  "frontend developer": {
+    "primary_role": "Frontend Developer",
+    "domain_category": "frontend",
+    "search_synonyms": [
+      "UI Developer",
+      "Front End Engineer",
+      "React Developer",
+      "Web Developer"
+    ],
+    "combined_query": "Frontend Developer, UI Developer, Front End Engineer"
+  },
+  "python backend": {
+    "primary_role": "Python Backend",
+    "domain_category": "backend",
+    "search_synonyms": [
+      "Python Developer",
+      "Backend Engineer",
+      "Python Backend Developer",
+      "Django Developer"
+    ],
+    "combined_query": "Python Backend Developer, Backend Engineer, Python Developer"
+  },
+  "python developer": {
+    "primary_role": "Python Developer",
+    "domain_category": "backend",
+    "search_synonyms": [
+      "Python Engineer",
+      "Backend Developer (Python)",
+      "Python Software Engineer",
+      "Junior Python Developer"
+    ],
+    "combined_query": "Python Developer, Python Engineer, Backend Developer"
+  },
+  "ai ml engineer": {
+    "primary_role": "AI ML Engineer",
+    "domain_category": "ai_ml",
+    "search_synonyms": [
+      "Machine Learning Engineer",
+      "AI Engineer",
+      "ML Engineer",
+      "Applied Machine Learning Engineer"
+    ],
+    "combined_query": "Machine Learning Engineer, AI Engineer, ML Engineer"
+  }
+}
