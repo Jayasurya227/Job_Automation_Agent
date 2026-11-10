@@ -1624,6 +1624,13 @@ body {
     padding: 12px 14px;
   }
 
+  /* Mobile View Only: Prominent Main Column Names (Discovered Jobs, Applied Jobs, Review, Archive) */
+  .kanban-column-title {
+    font-size: 1.15rem !important;
+    font-weight: 800 !important;
+    letter-spacing: -0.02em !important;
+  }
+
   .job-card-interactive {
     padding: 12px 12px;
   }
@@ -1812,17 +1819,20 @@ body {
     font-size: 0.72rem !important;
   }
 
-  /* Pipeline Controls on Mobile: Ergonomic, Non-Conflicting 2-Row Layout */
+  /* Mobile View Ergonomics: Hide Top Timetable Status Pill & Search Bar on Mobile; Kept on Laptop */
+  #daily-safety-quota-pill,
+  .top-timetable-status-pill {
+    display: none !important;
+  }
+
   .pipeline-controls-bar {
-    flex-direction: column !important;
     align-items: stretch !important;
     gap: 8px !important;
     width: 100% !important;
   }
 
   .controls-search-box {
-    max-width: 100% !important;
-    width: 100% !important;
+    display: none !important;
   }
 
   .search-input-styled {

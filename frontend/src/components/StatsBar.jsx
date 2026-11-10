@@ -80,7 +80,7 @@ export default function StatsBar({ metrics, backendStatus }) {
                 {appliedCount}
               </span>
               <span className="badge badge-indigo" style={{ fontSize: '0.68rem', padding: '1px 6px' }}>
-                Max 7/day
+                Max {metrics?.max_daily_apps || 7}/day
               </span>
             </div>
             <span style={{ fontSize: '0.74rem', color: 'var(--text-secondary)' }}>
@@ -92,7 +92,7 @@ export default function StatsBar({ metrics, backendStatus }) {
           </div>
         </div>
 
-        {/* Card 4: Reserve Pool (70-79%) */}
+        {/* Card 4: Reserve Pool (70-74%) */}
         <div className="stat-card" style={{ '--stat-accent': '#a855f7', '--stat-glow': 'rgba(168, 85, 247, 0.2)' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
             <span style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
@@ -103,7 +103,7 @@ export default function StatsBar({ metrics, backendStatus }) {
                 {reserveCount}
               </span>
               <span className="badge badge-purple" style={{ fontSize: '0.68rem', padding: '1px 6px' }}>
-                70% – 79%
+                70% – 74%
               </span>
             </div>
             <span style={{ fontSize: '0.74rem', color: 'var(--text-secondary)' }}>

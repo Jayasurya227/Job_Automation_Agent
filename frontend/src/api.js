@@ -210,7 +210,7 @@ export const api = {
       }
     };
 
-    const eventTypes = ['workflow_step', 'discovery_progress', 'system_event'];
+    const eventTypes = ['workflow_step', 'discovery_progress', 'system_event', 'quota_reached'];
     eventTypes.forEach((type) => {
       eventSource.addEventListener(type, (e) => {
         try {

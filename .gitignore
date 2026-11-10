@@ -63,6 +63,10 @@ backend/profile.json
 profile.json
 backend/data/browser_session/
 **/browser_session/
+backend/data/*_session*/
+backend/data/*_vault*/
+backend/data/*_stash*/
+backend/data/*_backup*/
 
 # Generated Pipeline Output Artifacts (Resumes, Snapshots, TeX files)
 output/

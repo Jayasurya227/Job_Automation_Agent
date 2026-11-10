@@ -148,7 +148,17 @@ export default function ProfileEditor({ isOpen, onClose, notify, onProfileUpdate
     if (e) e.preventDefault();
     setSaving(true);
     try {
-      const updated = await api.updateProfile(profile);
+      const cleanDailyCap = parseInt(profile?.preferences?.autopilot_max_daily_apps, 10);
+      const cleanNotice = parseInt(profile?.preferences?.notice_period_days, 10);
+      const safeProfile = {
+        ...profile,
+        preferences: {
+          ...profile?.preferences,
+          autopilot_max_daily_apps: (!isNaN(cleanDailyCap) && cleanDailyCap >= 1) ? cleanDailyCap : 7,
+          notice_period_days: (!isNaN(cleanNotice) && cleanNotice >= 0) ? cleanNotice : 0,
+        }
+      };
+      const updated = await api.updateProfile(safeProfile);
       setProfile(updated);
       if (onProfileUpdated) onProfileUpdated(updated);
       notify('Profile & career preferences saved successfully!', 'success');
@@ -593,12 +603,40 @@ export default function ProfileEditor({ isOpen, onClose, notify, onProfileUpdate
                       <input
                         id="notice-period-input"
                         type="number"
+                        inputMode="numeric"
                         className="form-input"
-                        value={profile.preferences?.notice_period_days ?? 0}
-                        onChange={(e) => setProfile({
-                          ...profile,
-                          preferences: { ...profile.preferences, notice_period_days: parseInt(e.target.value) || 0 }
-                        })}
+                        min={0}
+                        value={profile.preferences?.notice_period_days ?? ''}
+                        placeholder="0"
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (val === '') {
+                            setProfile({
+                              ...profile,
+                              preferences: { ...profile.preferences, notice_period_days: '' }
+                            });
+                            return;
+                          }
+                          const num = parseInt(val, 10);
+                          setProfile({
+                            ...profile,
+                            preferences: {
+                              ...profile.preferences,
+                              notice_period_days: isNaN(num) ? '' : Math.max(0, num)
+                            }
+                          });
+                        }}
+                        onBlur={() => {
+                          const current = profile.preferences?.notice_period_days;
+                          let finalVal = 0;
+                          if (current !== '' && current !== null && current !== undefined && !isNaN(Number(current))) {
+                            finalVal = Math.max(0, Number(current));
+                          }
+                          setProfile({
+                            ...profile,
+                            preferences: { ...profile.preferences, notice_period_days: finalVal }
+                          });
+                        }}
                       />
                     </div>
 
@@ -926,17 +964,17 @@ export default function ProfileEditor({ isOpen, onClose, notify, onProfileUpdate
                         </label>
                         <select
                           className="form-select"
-                          value={profile.preferences?.autopilot_auto_apply_score ?? 80}
+                          value={profile.preferences?.autopilot_auto_apply_score ?? 75}
                           onChange={(e) => setProfile({
                             ...profile,
                             preferences: { ...profile.preferences, autopilot_auto_apply_score: parseInt(e.target.value) }
                           })}
                           style={{ fontSize: '0.82rem', padding: '6px 10px' }}
                         >
-                          <option value={80}>≥ 80% Match (Recommended)</option>
+                          <option value={75}>≥ 75% Match (Recommended)</option>
+                          <option value={80}>≥ 80% Match (High Fit)</option>
                           <option value={85}>≥ 85% Match (Strict)</option>
                           <option value={90}>≥ 90% Match (Elite)</option>
-                          <option value={75}>≥ 75% Match (Broad)</option>
                         </select>
                       </div>
 
@@ -945,15 +983,42 @@ export default function ProfileEditor({ isOpen, onClose, notify, onProfileUpdate
                           Daily Application Cap
                         </label>
                         <input
+                          id="daily-application-cap-input"
                           type="number"
+                          inputMode="numeric"
                           className="form-input"
                           min={1}
-                          max={15}
-                          value={profile.preferences?.autopilot_max_daily_apps ?? 7}
-                          onChange={(e) => setProfile({
-                            ...profile,
-                            preferences: { ...profile.preferences, autopilot_max_daily_apps: parseInt(e.target.value) || 7 }
-                          })}
+                          value={profile.preferences?.autopilot_max_daily_apps ?? ''}
+                          placeholder="7"
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            if (val === '') {
+                              setProfile({
+                                ...profile,
+                                preferences: { ...profile.preferences, autopilot_max_daily_apps: '' }
+                              });
+                              return;
+                            }
+                            const num = parseInt(val, 10);
+                            setProfile({
+                              ...profile,
+                              preferences: {
+                                ...profile.preferences,
+                                autopilot_max_daily_apps: isNaN(num) ? '' : Math.max(1, num)
+                              }
+                            });
+                          }}
+                          onBlur={() => {
+                            const current = profile.preferences?.autopilot_max_daily_apps;
+                            let finalVal = 7;
+                            if (current !== '' && current !== null && current !== undefined && !isNaN(Number(current))) {
+                              finalVal = Math.max(1, Number(current));
+                            }
+                            setProfile({
+                              ...profile,
+                              preferences: { ...profile.preferences, autopilot_max_daily_apps: finalVal }
+                            });
+                          }}
                           style={{ fontSize: '0.82rem', padding: '6px 10px' }}
                         />
                       </div>

@@ -97,6 +97,8 @@ class PipelineMetrics(BaseModel):
     average_match_score: float
     ready_to_apply_count: int
     applied_count: int
+    applied_today: Optional[int] = 0
+    max_daily_apps: Optional[int] = 7
     interview_count: int
     offer_count: int
 

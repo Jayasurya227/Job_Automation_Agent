@@ -5,6 +5,7 @@ import ProfileEditor from './components/ProfileEditor';
 import AccountsSettings from './components/AccountsSettings';
 import ApplicationHistory from './components/ApplicationHistory';
 import JobModal from './components/JobModal';
+import QuotaModal from './components/QuotaModal';
 import Toast from './components/Toast';
 import AuthPage from './components/AuthPage';
 import { api } from './api';
@@ -56,6 +57,7 @@ export default function App() {
   const [indeedSession, setIndeedSession] = useState(null);
   const [autopilotStatus, setAutopilotStatus] = useState(null);
   const [applyingJobId, setApplyingJobId] = useState(null);
+  const [isQuotaModalOpen, setIsQuotaModalOpen] = useState(false);
 
   // Hourly Auto-Discovery State (9:00 AM – 9:00 PM)
   const [autoDiscoverEnabled, setAutoDiscoverEnabled] = useState(() => {
@@ -181,6 +183,20 @@ export default function App() {
     return () => clearInterval(timer);
   }, []);
 
+  // Real-Time Server-Sent Events (SSE) Listener for Safety Quota & Agent Events
+  useEffect(() => {
+    if (!currentUser) return;
+    const unsubscribe = api.subscribeToEvents('all', (data, eventType) => {
+      if (eventType === 'quota_reached' || data?.event === 'quota_reached') {
+        setIsQuotaModalOpen(true);
+        notify('🛡️ Daily application limit reached. Auto-apply paused for today to protect your account.', 'warning');
+      }
+    });
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
+  }, [currentUser, notify]);
+
   // Dynamic Navigation Handler to redirect to Portal Accounts settings
   const handleRedirectToPortalSettings = useCallback(() => {
     setActiveTab('settings');
@@ -206,6 +222,12 @@ export default function App() {
     const freshness = profile?.preferences?.freshness_days ?? 1;
     const minScore = profile?.preferences?.min_match_score ?? 70;
 
+    // Dynamic freshness label reflecting user's settings (Anytime / 24h / 3d / 7d)
+    const freshnessLabel = 
+      freshness === 0 ? 'anytime' :
+      freshness === 1 ? 'fresh 24h' :
+      `past ${freshness} days`;
+
     // 100% Naukri Auto-Pilot Engine
     const scheduledPortal = 'naukri';
     const scheduledPortalLabel = 'Naukri.com';
@@ -215,9 +237,9 @@ export default function App() {
     const locsLabel = locsToSearch.join(', ');
 
     if (isAutoTrigger) {
-      notify(`⏰ Scheduled Auto-Discovery: Agent is crawling fresh 24h jobs on ${scheduledPortalLabel} (${rolesLabel} in ${locsLabel})...`, 'info');
+      notify(`⏰ Scheduled Auto-Discovery: Agent is crawling ${freshnessLabel} jobs on ${scheduledPortalLabel} (${rolesLabel} in ${locsLabel})...`, 'info');
     } else {
-      notify(`🚀 Agent launched! Crawling fresh 24h jobs on ${scheduledPortalLabel} across [${rolesLabel}] in [${locsLabel}]...`, 'info');
+      notify(`🚀 Agent launched! Crawling ${freshnessLabel} jobs on ${scheduledPortalLabel} across [${rolesLabel}] in [${locsLabel}]...`, 'info');
     }
 
     try {
@@ -310,6 +332,15 @@ export default function App() {
   }, [currentUser, loadData]);
 
   const handleStatusChange = async (jobId, newStatus) => {
+    if (newStatus === 'Applied') {
+      const maxDaily = profile?.preferences?.autopilot_max_daily_apps || metrics?.max_daily_apps || 7;
+      const appliedToday = metrics?.applied_today || 0;
+      if (appliedToday >= maxDaily) {
+        setIsQuotaModalOpen(true);
+        notify(`🛡️ Daily application limit (${appliedToday}/${maxDaily}) reached. Auto-apply paused for today.`, 'warning');
+        return;
+      }
+    }
     try {
       await api.updateJobStatus(jobId, newStatus);
       // Optimistic update
@@ -344,6 +375,14 @@ export default function App() {
       return;
     }
 
+    const maxDaily = profile?.preferences?.autopilot_max_daily_apps || metrics?.max_daily_apps || 7;
+    const appliedToday = metrics?.applied_today || 0;
+    if (appliedToday >= maxDaily) {
+      setIsQuotaModalOpen(true);
+      notify(`🛡️ Daily application limit (${appliedToday}/${maxDaily}) reached. Account safety protection active.`, 'warning');
+      return;
+    }
+
     setApplyingJobId(job.id);
     notify(`⚡ Starting 1-Click Apply for "${job.job_title}" at ${job.company_name}...`, 'info');
 
@@ -357,6 +396,9 @@ export default function App() {
         );
         const newMetrics = await api.getMetrics();
         setMetrics(newMetrics);
+      } else if (res.status === 'QUOTA_REACHED') {
+        setIsQuotaModalOpen(true);
+        notify(`🛡️ Daily application limit reached. Auto-apply paused for today to protect your account.`, 'warning');
       } else if (res.status === 'EXTERNAL_SITE') {
         notify(`⚠️ "${job.job_title}" redirects to an external company site. Skipping 1-Click apply for now.`, 'warning');
         setJobs((prev) =>
@@ -424,11 +466,15 @@ export default function App() {
 
   const statusOptions = [
     { value: 'All', label: 'All Discovered', icon: '🌐', count: jobs.filter(j => j.status !== 'Applied').length },
-    { value: 'Ready', label: 'Review (≥80%)', icon: '⭐', count: jobs.filter(j => j.status === 'Ready').length },
+    { value: 'Ready', label: 'Review (≥75%)', icon: '⭐', count: jobs.filter(j => j.status === 'Ready').length },
     { value: 'Applied', label: 'Applied', icon: '✅', count: jobs.filter(j => j.status === 'Applied').length },
-    { value: 'Archived', label: 'Archive (70–79%)', icon: '📁', count: jobs.filter(j => j.status === 'Archived').length },
+    { value: 'Archived', label: 'Archive (70–74%)', icon: '📁', count: jobs.filter(j => j.status === 'Archived').length },
   ];
   const activeStatusOption = statusOptions.find(o => o.value === statusFilter) || statusOptions[0];
+
+  const maxDaily = profile?.preferences?.autopilot_max_daily_apps || metrics?.max_daily_apps || 7;
+  const appliedToday = metrics?.applied_today || 0;
+  const isQuotaFull = appliedToday >= maxDaily;
 
   // If user is not authenticated, show Amorphous Auth Gate
   if (!currentUser) {
@@ -544,25 +590,29 @@ export default function App() {
               }
 
               return (
-                <div style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  gap: '10px',
-                  padding: '4px 12px',
-                  borderRadius: '20px',
-                  background: isWork 
-                    ? 'rgba(16, 185, 129, 0.08)' 
-                    : (isBreak ? 'rgba(245, 158, 11, 0.08)' : 'rgba(255, 255, 255, 0.7)'),
-                  border: `1px solid ${isWork ? 'rgba(16, 185, 129, 0.25)' : (isBreak ? 'rgba(245, 158, 11, 0.25)' : 'rgba(0, 0, 0, 0.08)')}`,
-                  backdropFilter: 'blur(8px)',
-                  width: 'fit-content',
-                  fontSize: '0.78rem',
-                  fontWeight: 600,
-                  color: isWork ? '#065f46' : (isBreak ? '#92400e' : 'var(--text-secondary)'),
-                  boxShadow: 'var(--shadow-sm)',
-                  margin: '0 0 2px 0'
-                }}>
+                <div 
+                  className="top-timetable-status-pill"
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: '10px',
+                    padding: '4px 12px',
+                    borderRadius: '20px',
+                    background: isWork 
+                      ? 'rgba(16, 185, 129, 0.08)' 
+                      : (isBreak ? 'rgba(245, 158, 11, 0.08)' : 'rgba(255, 255, 255, 0.7)'),
+                    border: `1px solid ${isWork ? 'rgba(16, 185, 129, 0.25)' : (isBreak ? 'rgba(245, 158, 11, 0.25)' : 'rgba(0, 0, 0, 0.08)')}`,
+                    backdropFilter: 'blur(8px)',
+                    width: 'fit-content',
+                    fontSize: '0.78rem',
+                    fontWeight: 600,
+                    color: isWork ? '#065f46' : (isBreak ? '#92400e' : 'var(--text-secondary)'),
+                    boxShadow: 'var(--shadow-sm)',
+                    margin: '0 0 2px 0',
+                    cursor: 'default'
+                  }}
+                >
                   <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
                     <span>{pillText}</span>
                     {isWork && (
@@ -674,7 +724,11 @@ export default function App() {
                     try { localStorage.setItem('auto_discover_enabled', nextVal.toString()); } catch {}
                     notify(nextVal ? '⏰ Hourly Auto-Discovery enabled (9:00 AM – 9:00 PM)' : '⏸️ Hourly Auto-Discovery paused', 'info');
                   }}
-                  title={autoDiscoverEnabled ? "Auto-Discovery is active every 1 hour (9 AM - 9 PM). Click to pause." : "Auto-Discovery is paused. Click to resume."}
+                  title={
+                    autoDiscoverEnabled
+                      ? "Auto-Discovery is active every 1 hour (9 AM - 9 PM). Click to pause."
+                      : "Auto-Discovery is paused. Click to resume."
+                  }
                 >
                   <div className="pill-content-left">
                     <Clock size={13} className={isDiscovering ? 'spin' : ''} />
@@ -719,7 +773,7 @@ export default function App() {
                     alignItems: 'center',
                     gap: '6px'
                   }}
-                  title="Discover fresh 24h jobs now, or wait for the hourly auto-tap"
+                  title={`Discover ${profile?.preferences?.freshness_days === 0 ? 'anytime' : profile?.preferences?.freshness_days === 1 ? 'fresh 24h' : `past ${profile?.preferences?.freshness_days || 1} days`} jobs now, or wait for the hourly auto-tap`}
                 >
                   {isDiscovering ? (
                     <>
@@ -748,6 +802,7 @@ export default function App() {
               onDeleteJob={handleDeleteJob}
               onApplyJob={handle1ClickApply}
               applyingJobId={applyingJobId}
+              maxDaily={profile?.preferences?.autopilot_max_daily_apps || metrics?.max_daily_apps || 7}
             />
           </div>
         )}
@@ -867,6 +922,18 @@ export default function App() {
           isApplying={applyingJobId === selectedJobId}
         />
       )}
+
+      {/* Daily Safety Quota Modal */}
+      <QuotaModal
+        isOpen={isQuotaModalOpen}
+        onClose={() => setIsQuotaModalOpen(false)}
+        appliedCount={metrics?.applied_today || 0}
+        maxDailyLimit={profile?.preferences?.autopilot_max_daily_apps || metrics?.max_daily_apps || 7}
+        onOpenSettings={() => {
+          setActiveTab('settings');
+          setSettingsTab('profile');
+        }}
+      />
 
       {/* Floating Notifications */}
       <Toast toasts={toasts} onDismiss={dismissToast} />

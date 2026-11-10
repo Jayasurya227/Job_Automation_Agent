@@ -276,11 +276,17 @@ class AutoPilotScheduler:
                         )
                         return False
                     elif res.status == "EXTERNAL_SITE":
+                        ext_status = "Ready" if score >= auto_score else "Archived"
+                        ext_note = (
+                            f"External Company Portal on {portal_tag}: Requires direct manual application."
+                            if score >= auto_score
+                            else f"External Company Portal on {portal_tag}: ({score}% in Reserve Pool)."
+                        )
                         crud.create_or_update_application(
                             db=db,
                             job_id=job.id,
-                            status="Ready",
-                            notes=f"External Company Portal on {portal_tag}: Requires direct manual application."
+                            status=ext_status,
+                            notes=ext_note
                         )
                         return False
                     elif res.status == "LOGIN_REQUIRED":
@@ -319,6 +325,7 @@ class AutoPilotScheduler:
                         for job in candidates:
                             if self._daily_applications_count >= max_daily:
                                 logger.info(f"Daily safety quota reached ({self._daily_applications_count}/{max_daily}). Leftover jobs stay in Review for tomorrow.")
+                                emit_event("autopilot", "quota_reached", {"applied_today": self._daily_applications_count, "max_daily": max_daily})
                                 break
                             applied = await _attempt_auto_apply(job, db, filler, auto_score)
                             if applied:
@@ -326,6 +333,7 @@ class AutoPilotScheduler:
                                 applied_in_this_run += 1
                 elif self._daily_applications_count >= max_daily:
                     logger.info(f"Daily safety quota already reached ({self._daily_applications_count}/{max_daily}). Auto-apply paused for today; jobs remain queued for tomorrow.")
+                    emit_event("autopilot", "quota_reached", {"applied_today": self._daily_applications_count, "max_daily": max_daily})
 
                 # 3. Step 2: Discover fresh jobs for the scheduled portal (new jobs queue in Review when quota full)
                 search_term = target_roles[0] if target_roles else "AI Engineer"

@@ -200,12 +200,12 @@ async def ingest_single_job(
             logger.info(f"🌐 EXTERNAL PORTAL on {discovered.portal.title()}{reason_suffix}. Triaged to {target_status} with External tag.")
         elif score >= AUTO_APPLY_MATCH_THRESHOLD:
             target_status = "Ready"
-            status_note = f"1-Click Apply Ready: Elite ATS match {score}% (≥80%). In Review queue for 1-Click apply."
+            status_note = f"1-Click Apply Ready: Elite ATS match {score}% (≥{AUTO_APPLY_MATCH_THRESHOLD}%). In Review queue for 1-Click apply."
             logger.info(f"⭐ ELITE MATCH ({score}% >= {AUTO_APPLY_MATCH_THRESHOLD}%). Added to Review queue (Ready)...")
         else:
             target_status = "Archived"
-            status_note = f"1-Click Apply Ready: Solid ATS match {score}% (70-79%). Stored in Reserve Pool (Archived)."
-            logger.info(f"📁 SOLID MATCH ({score}% in 70-79%). Stored in Reserve Pool (Archived)...")
+            status_note = f"1-Click Apply Ready: Solid ATS match {score}% (70-{AUTO_APPLY_MATCH_THRESHOLD-1}%). Stored in Reserve Pool (Archived)."
+            logger.info(f"📁 SOLID MATCH ({score}% in 70-{AUTO_APPLY_MATCH_THRESHOLD-1}%). Stored in Reserve Pool (Archived)...")
 
         master_pdf = Path(__file__).resolve().parent.parent.parent / "data" / "uploaded_resume.pdf"
         pdf_path = str(master_pdf) if master_pdf.exists() else ""
@@ -327,6 +327,7 @@ async def process_1click_applications(max_daily_limit: int = 7, min_score: int =
 
         if applied_today >= max_daily:
             logger.info(f"Daily safety quota reached ({applied_today}/{max_daily}). Leftover jobs stay in Review for tomorrow.")
+            emit_event("autopilot", "quota_reached", {"applied_today": applied_today, "max_daily": max_daily})
             return {"applied_count": 0, "daily_total": applied_today, "status": "QUOTA_FULL"}
 
         ready_jobs = crud.list_jobs(db=db, limit=50, status="Ready")
@@ -350,6 +351,7 @@ async def process_1click_applications(max_daily_limit: int = 7, min_score: int =
         for job in candidates:
             if applied_today >= max_daily:
                 logger.info(f"Daily safety quota reached ({applied_today}/{max_daily}). Leftover jobs stay in Review for tomorrow.")
+                emit_event("autopilot", "quota_reached", {"applied_today": applied_today, "max_daily": max_daily})
                 break
 
             score = job.evaluation.match_score if job.evaluation else 0
@@ -397,20 +399,26 @@ async def process_1click_applications(max_daily_limit: int = 7, min_score: int =
                     logger.info(f"ℹ️ Already applied to '{job.job_title}' at '{job.company_name}' on {portal_display}. Marked Applied.")
 
                 elif res.status == "EXTERNAL_SITE":
+                    ext_status = "Ready" if score >= AUTO_APPLY_MATCH_THRESHOLD else "Archived"
+                    ext_note = (
+                        f"External Company Portal: Direct employer application required on {portal_display}."
+                        if score >= AUTO_APPLY_MATCH_THRESHOLD
+                        else f"External Company Portal on {portal_display}: ({score}% in Reserve Pool)."
+                    )
                     crud.create_or_update_application(
                         db=db,
                         job_id=job.id,
-                        status="Ready",
-                        notes=f"External Company Portal: Direct employer application required on {portal_display}."
+                        status=ext_status,
+                        notes=ext_note
                     )
-                    logger.info(f"🔗 '{job.job_title}' at '{job.company_name}' redirects to external company portal. Skipped for 1-Click apply.")
+                    logger.info(f"🔗 '{job.job_title}' at '{job.company_name}' redirects to external company portal. Triaged to {ext_status}.")
                     emit_event("discovery", "discovery_progress", {
                         "stage": "external_skip",
                         "job_id": job.id,
                         "title": job.job_title,
                         "company": job.company_name,
                         "portal": portal_display,
-                        "message": f"🔗 '{job.job_title}' at {job.company_name} is an external company portal. Left in Review."
+                        "message": f"🔗 '{job.job_title}' at {job.company_name} is an external portal -> Triaged to {ext_status}."
                     })
 
                 elif res.status == "LOGIN_REQUIRED":

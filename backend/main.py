@@ -470,12 +470,23 @@ def get_pipeline_metrics(db: DbSession):
     interview_count = sum(1 for j in jobs if j.applications and j.applications[0].status == "Interview")
     offer_count = sum(1 for j in jobs if j.applications and j.applications[0].status == "Offer")
     ready_count = sum(1 for j in jobs if j.applications and j.applications[0].status == "Ready")
+    applied_today = crud.get_applied_today_count(db)
+
+    max_daily = 7
+    try:
+        from app.agent.scorer import load_profile
+        p = load_profile()
+        max_daily = getattr(p.preferences, "autopilot_max_daily_apps", 7) or 7
+    except Exception:
+        pass
 
     return PipelineMetrics(
         total_jobs=total,
         average_match_score=avg_score,
         ready_to_apply_count=ready_count,
         applied_count=applied_count,
+        applied_today=applied_today,
+        max_daily_apps=max_daily,
         interview_count=interview_count,
         offer_count=offer_count
     )

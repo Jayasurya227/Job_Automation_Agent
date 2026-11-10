@@ -47,10 +47,11 @@ DEFAULT_MODEL: str = os.getenv("CLAUDE_MODEL", "claude-haiku-5-5")
 DEFAULT_PACING_SECONDS: float = 2.5
 
 # Match-score routing (single source of truth for every module)
-# >= READY_MATCH_THRESHOLD (70%) -> Keep in system (Review/Reserve). Below 70% -> Discard immediately.
+# >= AUTO_APPLY_MATCH_THRESHOLD (75%) -> Autonomous 1-Click Apply (Elite match)
+# 70% to 74% -> Reserve Pool (Archived for safe backup)
+# Below 70% -> Discard immediately.
 READY_MATCH_THRESHOLD: int = 70
-# >= AUTO_APPLY_MATCH_THRESHOLD (80%) -> Autonomous 1-Click Apply
-AUTO_APPLY_MATCH_THRESHOLD: int = 80
+AUTO_APPLY_MATCH_THRESHOLD: int = 75
 
 # Auto-Pilot submits matching jobs without review only when this is true.
 # Off by default: matching jobs stay 'Ready' for your one-click approval.

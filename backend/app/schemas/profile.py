@@ -26,7 +26,7 @@ class Preferences(BaseModel):
     experience_level: str = Field(default="0-1", description="Target experience filter: '0-1' (Fresher), '1-2' (Early Career), '2-4' (Junior/Associate), 'all' (Any)")
     autopilot_enabled: bool = Field(default=False, description="Enable automated daytime office hours runs (9:00 AM – 9:00 PM)")
     autopilot_auto_apply_score: int = Field(default=75, ge=50, le=100, description="Minimum score to auto-apply")
-    autopilot_max_daily_apps: int = Field(default=7, ge=1, le=50, description="Max applications per day")
+    autopilot_max_daily_apps: int = Field(default=7, ge=1, description="Max applications per day")
     autopilot_run_hour: int = Field(default=11, ge=0, le=23, description="Hour of day to run during office hours (e.g. 11 = 11:00 AM)")
     autopilot_run_minute: int = Field(default=0, ge=0, le=59, description="Minute of hour to run (e.g. 0)")
 

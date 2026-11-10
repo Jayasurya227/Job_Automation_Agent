@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import TypedDict, List, Dict, Any, Optional, Annotated, Literal
 import operator
 
-from app.config import DATA_DIR, BASE_DIR, READY_MATCH_THRESHOLD
+from app.config import DATA_DIR, BASE_DIR, READY_MATCH_THRESHOLD, AUTO_APPLY_MATCH_THRESHOLD
 from app.schemas.match import JobMatchResult
 from app.agent.scorer import analyze_and_score_job, load_profile
 from app.db.session import SessionLocal
@@ -207,6 +207,7 @@ def run_application_workflow(
         "review_snapshot_path": None,
         "confirmation_snapshot_path": None,
         "requires_human_approval": requires_human_approval,
+        "is_manual_override": is_manual_override,
         "human_approved": False,
         "rejection_reason": None,
         "execution_logs": [f"[{ts}] Direct application workflow initialized for {job_title} at {company_name}."],
@@ -309,9 +310,10 @@ def run_application_workflow(
     max_daily_apps = getattr(profile.preferences, "autopilot_max_daily_apps", 7) or 7
     with SessionLocal() as db:
         applied_today = crud.get_applied_today_count(db)
-        if applied_today >= max_daily_apps and not requires_human_approval:
+        if applied_today >= max_daily_apps and not (requires_human_approval or is_manual_override):
             msg = f"Daily safety quota reached ({applied_today}/{max_daily_apps} applications today). Auto-apply paused to protect your account."
             logger.info(msg)
+            emit_event("autopilot", "quota_reached", {"applied_today": applied_today, "max_daily": max_daily_apps})
             _mark_blocked(state, status="QUOTA_REACHED", message=msg)
             return _result(state, tid)
 
@@ -386,11 +388,13 @@ def run_application_workflow(
     if job_id and res.status == "EXTERNAL_SITE":
         try:
             with SessionLocal() as db:
+                target_status = "Ready" if score >= AUTO_APPLY_MATCH_THRESHOLD else "Archived"
+                note_suffix = " Direct application required on employer site." if score >= AUTO_APPLY_MATCH_THRESHOLD else f" ({score}% in Reserve Pool)."
                 crud.create_or_update_application(
                     db=db,
                     job_id=job_id,
-                    status="Ready",
-                    notes="External Company Portal: Direct application required on employer site."
+                    status=target_status,
+                    notes=f"External Company Portal:{note_suffix}"
                 )
         except Exception as db_err:
             logger.debug(f"Notice updating external site application note: {db_err}")

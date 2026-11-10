@@ -67,7 +67,8 @@ export default function KanbanBoard({
   onStatusChange,
   onDeleteJob,
   onApplyJob,
-  applyingJobId = null
+  applyingJobId = null,
+  maxDaily = 7
 }) {
   const [confirmApplyJob, setConfirmApplyJob] = useState(null);
 
@@ -94,7 +95,7 @@ export default function KanbanBoard({
       {
         id: 'Applied',
         title: 'Applied Jobs',
-        subtitle: 'Submitted to Employer (Max 7/day)',
+        subtitle: `Submitted to Employer (Max ${maxDaily}/day)`,
         color: 'var(--emerald)',
         glow: 'rgba(16, 185, 129, 0.4)',
         badgeClass: 'badge-emerald',
@@ -118,7 +119,7 @@ export default function KanbanBoard({
       {
         id: 'Ready',
         title: '⭐ Review',
-        subtitle: '80%+ Matches • External Company Sites & Manual Action',
+        subtitle: '75%+ Matches • External Company Sites & Manual Action',
         color: 'var(--cyan)',
         glow: 'rgba(6, 182, 212, 0.4)',
         badgeClass: 'badge-cyan',
@@ -130,7 +131,7 @@ export default function KanbanBoard({
       {
         id: 'Applied',
         title: '⚡ Applied Jobs',
-        subtitle: 'Submitted to Employer (Max 7/day)',
+        subtitle: `Submitted to Employer (Max ${maxDaily}/day)`,
         color: 'var(--emerald)',
         glow: 'rgba(16, 185, 129, 0.4)',
         badgeClass: 'badge-emerald',
@@ -142,7 +143,7 @@ export default function KanbanBoard({
       {
         id: 'Archived',
         title: '📁 Archive',
-        subtitle: 'Reserve Pool (70% - 79% Backup Leads)',
+        subtitle: 'Reserve Pool (70% - 74% Backup Leads)',
         color: '#8b5cf6',
         glow: 'rgba(139, 92, 246, 0.4)',
         badgeClass: 'badge-purple',
@@ -205,18 +206,21 @@ export default function KanbanBoard({
                   flexShrink: 0
                 }} />
                 <div style={{ minWidth: 0 }}>
-                  <div style={{
-                    fontSize: '0.92rem',
-                    fontWeight: 800,
-                    color: 'var(--text-main)',
-                    letterSpacing: '-0.01em',
-                    whiteSpace: 'nowrap',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis'
-                  }}>
+                  <div
+                    className="kanban-column-title"
+                    style={{
+                      fontSize: '0.92rem',
+                      fontWeight: 800,
+                      color: 'var(--text-main)',
+                      letterSpacing: '-0.01em',
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis'
+                    }}
+                  >
                     {col.title}
                   </div>
-                  <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                  <div className="kanban-column-subtitle" style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
                     {col.subtitle}
                   </div>
                 </div>
@@ -682,7 +686,9 @@ function JobCard({ job, ranking, onSelect, onStatusChange, onDelete, onApply, on
             <button
               onClick={(e) => {
                 e.stopPropagation();
-                if (job.job_url) {
+                if (onApply) {
+                  onApply(job);
+                } else if (job.job_url) {
                   window.open(job.job_url, '_blank', 'noopener,noreferrer');
                 }
               }}
