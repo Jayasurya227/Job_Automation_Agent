@@ -1,4 +1,4 @@
-[![XERJ Corpus Hub contributor](https://shields.io)](https://xerj.org)
+[![XERJ Corpus Hub contributor](https://hub.xerj.org/contributors/Jayasurya227/badge.svg)](https://hub.xerj.org/contributors/Jayasurya227)
 
 <div align="center">
 
