@@ -54,6 +54,7 @@ yarn-error.log*
 *.db-shm
 *.sqlite
 *.sqlite3
+*.bak
 backend/data/*.db
 data/*.db
 backend/data/account_settings.json
