@@ -62,6 +62,7 @@ async def ingest_single_job(
     discovered: DiscoveredJob,
     min_match_score: int = READY_MATCH_THRESHOLD,
     profile_path: str = str(DEFAULT_PROFILE_PATH),
+    user_id: Optional[int] = None,
 ) -> Optional[IngestionJobResult]:
     """
     Ingests, scores, and auto-triages a single discovered job.
@@ -70,9 +71,9 @@ async def ingest_single_job(
     """
     db = SessionLocal()
     try:
-        # 1. Final deduplication check
-        if job_exists(db, job_url=discovered.job_url, title=discovered.title, company=discovered.company):
-            logger.info(f"Skipping duplicate job: {discovered.title} at {discovered.company}")
+        # 1. Final deduplication check scoped to user_id
+        if job_exists(db, job_url=discovered.job_url, title=discovered.title, company=discovered.company, user_id=user_id):
+            logger.info(f"Skipping duplicate job: {discovered.title} at {discovered.company} (user_id={user_id})")
             return None
 
         # 2. Guarantee robust description text for Gemini analysis
@@ -163,6 +164,7 @@ async def ingest_single_job(
             portal_name=discovered.portal,
             job_url=discovered.job_url,
             salary_range=discovered.salary,
+            user_id=user_id,
         )
         save_job_evaluation(db, job_id=job_record.id, match=match_result)
 
@@ -219,6 +221,7 @@ async def ingest_single_job(
             cold_body="",
             linkedin_note="",
             notes=status_note,
+            user_id=user_id,
         )
         maintain_top_active_jobs(db=db)
 
@@ -258,10 +261,11 @@ async def run_autonomous_ingestion(
     min_match_score: int = READY_MATCH_THRESHOLD,
     max_jobs_to_process: Optional[int] = None,
     profile_path: str = str(DEFAULT_PROFILE_PATH),
+    user_id: Optional[int] = None,
 ) -> IngestionReport:
     """
     Ingests a batch of discovered jobs up to max_jobs_to_process (or all if None),
-    respecting Gemini rate limits and returning a structured report.
+    respecting Gemini rate limits and returning a structured report scoped to user_id.
     """
     report = IngestionReport(total_discovered=len(discovered_jobs))
 
@@ -269,7 +273,7 @@ async def run_autonomous_ingestion(
         to_process = discovered_jobs[:max_jobs_to_process]
     else:
         to_process = discovered_jobs
-    logger.info(f"Starting autonomous ingestion pipeline for {len(to_process)} job(s)...")
+    logger.info(f"Starting autonomous ingestion pipeline for {len(to_process)} job(s) (user_id={user_id})...")
 
     for discovered in to_process:
         try:
@@ -277,6 +281,7 @@ async def run_autonomous_ingestion(
                 discovered=discovered,
                 min_match_score=min_match_score,
                 profile_path=profile_path,
+                user_id=user_id,
             )
 
             if result is None:
@@ -452,6 +457,7 @@ async def discover_and_ingest(
     experience_level: Optional[str] = None,
     min_match_score: int = READY_MATCH_THRESHOLD,
     max_jobs_to_process: Optional[int] = None,
+    user_id: Optional[int] = None,
 ) -> IngestionReport:
     """
     End-to-end autonomous discovery and ingestion pipeline.
@@ -536,6 +542,7 @@ async def discover_and_ingest(
             discovered_jobs=raw_discovered,
             min_match_score=min_match_score,
             max_jobs_to_process=max_jobs_to_process,
+            user_id=user_id,
         )
 
         # Autonomously trigger 1-Click apply on elite matches (>= 80%, respecting daily max 7)

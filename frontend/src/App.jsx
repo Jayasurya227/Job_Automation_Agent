@@ -8,7 +8,7 @@ import JobModal from './components/JobModal';
 import QuotaModal from './components/QuotaModal';
 import Toast from './components/Toast';
 import AuthPage from './components/AuthPage';
-import { api } from './api';
+import { api, getAuthToken, clearAuthToken } from './api';
 import { getJobApplyClassification, openExternalJobLink } from './utils/jobClassification';
 import { 
   Search, 
@@ -29,13 +29,20 @@ export default function App() {
   // Always start unauthenticated so opening the localhost link opens the sign-in page first
   const [currentUser, setCurrentUser] = useState(null);
 
-  // Clear legacy stored session from previous visits on mount
+  // Restore authenticated session from valid JWT on mount
   useEffect(() => {
-    try {
-      localStorage.removeItem('agent_user');
-      sessionStorage.removeItem('agent_user');
-    } catch {
-      // ignore
+    const token = getAuthToken();
+    if (token) {
+      api.getMe()
+        .then((user) => {
+          if (user && user.id) {
+            setCurrentUser(user);
+          }
+        })
+        .catch(() => {
+          clearAuthToken();
+          setCurrentUser(null);
+        });
     }
   }, []);
 
@@ -97,16 +104,11 @@ export default function App() {
 
   const handleLogin = useCallback((userData) => {
     setCurrentUser(userData);
-    notify(`Welcome ${userData.firstName || 'User'}! Pipeline workspace unlocked.`, 'success');
+    notify(`Welcome ${userData.full_name || userData.firstName || 'Candidate'}! Pipeline workspace unlocked.`, 'success');
   }, [notify]);
 
   const handleLogout = useCallback(() => {
-    try {
-      localStorage.removeItem('agent_user');
-      sessionStorage.removeItem('agent_user');
-    } catch (e) {
-      console.error(e);
-    }
+    clearAuthToken();
     setCurrentUser(null);
     notify('Signed out from workspace.', 'info');
   }, [notify]);
@@ -192,8 +194,9 @@ export default function App() {
         setIsQuotaModalOpen(true);
         notify('🛡️ Daily application limit reached. Auto-apply paused for today to protect your account.', 'warning');
       } else if (eventType === 'discovery_progress' || data?.stage) {
+        // Multi-page scanning runs silently in the background without distracting toast popups
         if (data?.stage === 'page_scanned' && data?.message) {
-          notify(data.message, 'info');
+          console.debug('[Discovery Progress]', data.message);
         }
       }
     });

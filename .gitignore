@@ -58,6 +58,10 @@ yarn-error.log*
 backend/data/*.db
 data/*.db
 backend/data/account_settings.json
+backend/data/*cookies*.json
+backend/data/*.checkpoint
+backend/data/*.empty_checkpoint
+backend/data/backups/
 backend/data/uploaded_resume.pdf
 # Personal candidate profile (contact details, salary answers)
 backend/profile.json

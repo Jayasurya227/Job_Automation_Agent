@@ -14,8 +14,40 @@ function withToken(url) {
   return `${url}${sep}api_token=${encodeURIComponent(API_TOKEN)}`;
 }
 
+export function getAuthToken() {
+  try {
+    return localStorage.getItem('auth_token') || '';
+  } catch {
+    return '';
+  }
+}
+
+export function setAuthToken(token) {
+  try {
+    if (token) {
+      localStorage.setItem('auth_token', token);
+    } else {
+      localStorage.removeItem('auth_token');
+    }
+  } catch {
+    // ignore
+  }
+}
+
+export function clearAuthToken() {
+  setAuthToken(null);
+}
+
 function authHeaders() {
-  return API_TOKEN ? { 'X-API-Token': API_TOKEN } : {};
+  const headers = {};
+  if (API_TOKEN) {
+    headers['X-API-Token'] = API_TOKEN;
+  }
+  const jwt = getAuthToken();
+  if (jwt) {
+    headers['Authorization'] = `Bearer ${jwt}`;
+  }
+  return headers;
 }
 
 async function request(endpoint, options = {}) {
@@ -58,6 +90,33 @@ async function request(endpoint, options = {}) {
 export const api = {
   // Health
   checkHealth: () => request('/api/health'),
+
+  // Multi-Tenant Authentication & Account Management
+  register: (fullName, email, password) =>
+    request('/api/auth/register', {
+      method: 'POST',
+      body: JSON.stringify({ full_name: fullName, email, password }),
+    }),
+
+  login: (email, password) =>
+    request('/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ email, password }),
+    }),
+
+  getMe: () => request('/api/auth/me'),
+
+  requestPasswordResetOtp: (email) =>
+    request('/api/auth/forgot-password/request-otp', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    }),
+
+  verifyOtpAndResetPassword: (email, otp, newPassword) =>
+    request('/api/auth/forgot-password/verify-reset', {
+      method: 'POST',
+      body: JSON.stringify({ email, otp, new_password: newPassword }),
+    }),
 
   // Pipeline Metrics
   getMetrics: () => request('/api/metrics'),

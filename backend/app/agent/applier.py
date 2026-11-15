@@ -84,6 +84,17 @@ class EasyApplyFiller:
         self.current_job_title = ""
         self.current_company_name = ""
 
+    def _capture_error_snapshot(self, page: Page, tid: str, error_prefix: str = "err") -> Optional[str]:
+        """Captures a snapshot ONLY when an error or failure occurs, saving disk space during normal operations."""
+        try:
+            error_file = SNAPSHOT_DIR / f"{error_prefix}_{tid}.png"
+            page.screenshot(path=str(error_file), full_page=False)
+            logger.info(f"[{tid}] Diagnostic error snapshot saved to: {error_file}")
+            return str(error_file)
+        except Exception as e:
+            logger.debug(f"[{tid}] Error snapshot capture notice: {e}")
+            return None
+
     def _lookup_answer(
         self,
         label_text: str,
@@ -475,12 +486,14 @@ class EasyApplyFiller:
         challenge = check_bot_challenge(page)
         if challenge:
             logger.warning(f"[{tid}] Naukri bot challenge detected: {challenge}")
+            err_snap = self._capture_error_snapshot(page, tid, "err_bot")
             context.close()
             return FormFillResult(
                 status="BOT_CHALLENGE",
                 thread_id=tid,
                 job_title=job_title,
                 company_name=company_name,
+                snapshot_path=err_snap,
                 error_message=f"Naukri verification required: {challenge}"
             )
 
@@ -659,17 +672,13 @@ class EasyApplyFiller:
         )
         if immediate_success:
             logger.info(f"[{tid}] Immediate application success message detected on page!")
-            try:
-                page.screenshot(path=str(confirmed_snapshot_file), full_page=False)
-            except Exception:
-                pass
             context.close()
             return FormFillResult(
                 status="SUBMITTED",
                 thread_id=tid,
                 job_title=job_title,
                 company_name=company_name,
-                confirmation_snapshot_path=str(confirmed_snapshot_file),
+                confirmation_snapshot_path=None,
                 steps_traversed=1
             )
 
@@ -899,11 +908,6 @@ class EasyApplyFiller:
                     page.wait_for_timeout(2500)
 
         page.wait_for_timeout(2000)
-        try:
-            page.screenshot(path=str(confirmed_snapshot_file), full_page=False)
-        except Exception:
-            pass
-
         context.close()
         logger.info(f"[{tid}] Naukri application submitted successfully.")
 
@@ -912,7 +916,7 @@ class EasyApplyFiller:
             thread_id=tid,
             job_title=job_title,
             company_name=company_name,
-            confirmation_snapshot_path=str(confirmed_snapshot_file),
+            confirmation_snapshot_path=None,
             steps_traversed=1
         )
 
@@ -1208,11 +1212,6 @@ class EasyApplyFiller:
                     page.evaluate("(btn) => btn.click()", submit_btn)
 
                 page.wait_for_timeout(random.randint(2500, 3500))
-                try:
-                    page.screenshot(path=str(confirmed_snapshot_file), full_page=False)
-                except Exception:
-                    pass
-
                 context.close()
                 logger.info(f"[{tid}] Indeed application successfully submitted!")
                 return FormFillResult(
@@ -1220,7 +1219,7 @@ class EasyApplyFiller:
                     thread_id=tid,
                     job_title=job_title,
                     company_name=company_name,
-                    confirmation_snapshot_path=str(confirmed_snapshot_file),
+                    confirmation_snapshot_path=None,
                     filled_fields=filled_fields,
                     steps_traversed=step_idx
                 )
@@ -1468,12 +1467,14 @@ class EasyApplyFiller:
                 submit_btn = page.query_selector(submit_selector)
                 if not submit_btn:
                     # Never report SUBMITTED when no submit control was actually clicked
+                    err_snap = self._capture_error_snapshot(page, tid, "err_no_submit")
                     context.close()
                     return FormFillResult(
                         status="ERROR",
                         thread_id=tid,
                         job_title=job_title,
                         company_name=company_name,
+                        snapshot_path=err_snap,
                         filled_fields=all_filled,
                         steps_traversed=steps_count,
                         error_message="Submit button not found on the final review step. Nothing was submitted.",
@@ -1485,18 +1486,13 @@ class EasyApplyFiller:
                     submit_btn.click()
                 page.wait_for_timeout(random.randint(500, 900))
 
-                try:
-                    page.screenshot(path=str(confirmed_snapshot_file), full_page=False)
-                except Exception:
-                    pass
-
                 context.close()
                 return FormFillResult(
                     status="SUBMITTED",
                     thread_id=tid,
                     job_title=job_title,
                     company_name=company_name,
-                    confirmation_snapshot_path=str(confirmed_snapshot_file),
+                    confirmation_snapshot_path=None,
                     filled_fields=all_filled,
                     steps_traversed=steps_count
                 )

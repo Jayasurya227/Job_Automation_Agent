@@ -56,3 +56,9 @@ AUTO_APPLY_MATCH_THRESHOLD: int = 75
 # Auto-Pilot submits matching jobs without review only when this is true.
 # Off by default: matching jobs stay 'Ready' for your one-click approval.
 AUTOPILOT_AUTO_SUBMIT: bool = os.getenv("AUTOPILOT_AUTO_SUBMIT", "true").lower() == "true"
+
+# Multi-User JWT Security Configuration
+JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "autonomous_job_agent_super_secret_jwt_key_2026_production")
+JWT_ALGORITHM: str = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", str(60 * 24 * 7)))  # 7 Days default
+OTP_EXPIRE_MINUTES: int = 10  # 10 minutes OTP validity window

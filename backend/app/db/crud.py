@@ -21,10 +21,12 @@ def create_job(
     location: str = "",
     portal_name: str = "Manual",
     job_url: str = "",
-    salary_range: str = ""
+    salary_range: str = "",
+    user_id: Optional[int] = None,
 ) -> Job:
-    """Inserts a new job listing into the database."""
+    """Inserts a new job listing into the database, scoped to user_id."""
     job = Job(
+        user_id=user_id,
         job_title=job_title.strip(),
         company_name=company_name.strip(),
         job_description=job_description.strip(),
@@ -38,9 +40,9 @@ def create_job(
     db.refresh(job)
     return job
 
-def job_exists(db: Session, job_url: str = "", title: str = "", company: str = "") -> bool:
+def job_exists(db: Session, job_url: str = "", title: str = "", company: str = "", user_id: Optional[int] = None) -> bool:
     """
-    Checks whether a job already exists in SQLite:
+    Checks whether a job already exists in SQLite for a specific user (or globally if user_id is None):
     1. If the candidate has already APPLIED, NEVER re-discover or re-apply (permanent safety).
     2. If previously discovered/unapplied, checks within the 30-day window to prevent duplicate listings.
     """
@@ -50,7 +52,10 @@ def job_exists(db: Session, job_url: str = "", title: str = "", company: str = "
     # 1. Check by URL
     if job_url and job_url.strip():
         url_clean = job_url.strip()
-        matching_jobs = db.query(Job).filter(Job.job_url == url_clean).all()
+        query = db.query(Job).filter(Job.job_url == url_clean)
+        if user_id is not None:
+            query = query.filter(Job.user_id == user_id)
+        matching_jobs = query.all()
         for j in matching_jobs:
             if any(app.status == "Applied" for app in j.applications):
                 return True  # Already applied - never duplicate
@@ -61,10 +66,13 @@ def job_exists(db: Session, job_url: str = "", title: str = "", company: str = "
     if title and company:
         t_clean = title.strip()
         c_clean = company.strip()
-        matching_tc = db.query(Job).filter(
+        query = db.query(Job).filter(
             Job.job_title.ilike(t_clean),
             Job.company_name.ilike(c_clean)
-        ).all()
+        )
+        if user_id is not None:
+            query = query.filter(Job.user_id == user_id)
+        matching_tc = query.all()
         for j in matching_tc:
             if any(app.status == "Applied" for app in j.applications):
                 return True  # Already applied - never duplicate
@@ -73,21 +81,27 @@ def job_exists(db: Session, job_url: str = "", title: str = "", company: str = "
 
     return False
 
-def get_job(db: Session, job_id: int) -> Optional[Job]:
-    """Retrieves a single job with its evaluation and applications."""
-    return db.query(Job).filter(Job.id == job_id).first()
+def get_job(db: Session, job_id: int, user_id: Optional[int] = None) -> Optional[Job]:
+    """Retrieves a single job with its evaluation and applications, scoped to user_id if provided."""
+    query = db.query(Job).filter(Job.id == job_id)
+    if user_id is not None:
+        query = query.filter(Job.user_id == user_id)
+    return query.first()
 
 def list_jobs(
     db: Session, 
     skip: int = 0, 
     limit: int = 100, 
     status: Optional[str] = None,
-    days_limit: Optional[int] = None
+    days_limit: Optional[int] = None,
+    user_id: Optional[int] = None,
 ) -> List[Job]:
     """
-    Retrieves jobs, optionally filtering by pipeline status and rolling days limit (e.g. 7-day rolling window).
+    Retrieves jobs, optionally filtering by user_id, pipeline status, and rolling days limit (e.g. 7-day rolling window).
     """
     query = db.query(Job)
+    if user_id is not None:
+        query = query.filter(Job.user_id == user_id)
     if status:
         query = query.join(Job.applications).filter(Application.status == status)
     if days_limit is not None and days_limit > 0:
@@ -102,12 +116,22 @@ def list_jobs(
 def get_jobs_history(
     db: Session,
     year: Optional[int] = None,
-    month: Optional[int] = None
+    month: Optional[int] = None,
+    user_id: Optional[int] = None,
 ) -> dict:
     """
     Retrieves historical jobs grouped into Discovered and Applied for a specific month and year,
-    along with available months metadata.
+    scoped strictly to user_id if provided, along with available months metadata.
     """
+    import calendar
+    now = datetime.utcnow()
+    target_year = year if year is not None else now.year
+    target_month = month if month is not None else now.month
+
+    query = db.query(Job)
+    if user_id is not None:
+        query = query.filter(Job.user_id == user_id)
+    all_jobs = query.order_by(Job.created_at.desc()).all()
     import calendar
     now = datetime.utcnow()
     target_year = year if year is not None else now.year
@@ -226,13 +250,22 @@ def create_or_update_application(
     cold_subject: str = "",
     cold_body: str = "",
     linkedin_note: str = "",
-    notes: str = ""
+    notes: str = "",
+    user_id: Optional[int] = None,
 ) -> Application:
-    """Creates or updates tracking data for a job application."""
+    """Creates or updates tracking data for a job application, scoped to user_id."""
     app_record = db.query(Application).filter(Application.job_id == job_id).first()
     if not app_record:
-        app_record = Application(job_id=job_id)
+        # If user_id is not passed explicitly, attempt to inherit from parent Job record
+        effective_user_id = user_id
+        if effective_user_id is None:
+            parent_job = db.query(Job).filter(Job.id == job_id).first()
+            if parent_job and parent_job.user_id is not None:
+                effective_user_id = parent_job.user_id
+        app_record = Application(job_id=job_id, user_id=effective_user_id)
         db.add(app_record)
+    elif user_id is not None and app_record.user_id is None:
+        app_record.user_id = user_id
 
     app_record.status = status
     if tex_path:
@@ -261,9 +294,12 @@ def create_or_update_application(
 
     return app_record
 
-def update_application_status(db: Session, application_id: int, new_status: str) -> Optional[Application]:
-    """Updates the pipeline status for an existing application."""
-    app_record = db.query(Application).filter(Application.id == application_id).first()
+def update_application_status(db: Session, application_id: int, new_status: str, user_id: Optional[int] = None) -> Optional[Application]:
+    """Updates the pipeline status for an existing application, checking user ownership if user_id is provided."""
+    query = db.query(Application).filter(Application.id == application_id)
+    if user_id is not None:
+        query = query.filter(Application.user_id == user_id)
+    app_record = query.first()
     if not app_record:
         return None
     app_record.status = new_status
@@ -278,16 +314,19 @@ def update_application_status(db: Session, application_id: int, new_status: str)
 
     return app_record
 
-def update_job_status(db: Session, job_id: int, status: str) -> Application:
+def update_job_status(db: Session, job_id: int, status: str, user_id: Optional[int] = None) -> Application:
     """Updates or creates the application status record for a job."""
-    res = create_or_update_application(db=db, job_id=job_id, status=status)
+    res = create_or_update_application(db=db, job_id=job_id, status=status, user_id=user_id)
     if status in ["Applied", "Archived"]:
         refill_top_active_jobs(db, max_active=3)
     return res
 
-def delete_job(db: Session, job_id: int) -> bool:
-    """Deletes a job and cascades deletion to its evaluation and application records."""
-    job = db.query(Job).filter(Job.id == job_id).first()
+def delete_job(db: Session, job_id: int, user_id: Optional[int] = None) -> bool:
+    """Deletes a job and cascades deletion to its evaluation and application records, scoped to user_id if provided."""
+    query = db.query(Job).filter(Job.id == job_id)
+    if user_id is not None:
+        query = query.filter(Job.user_id == user_id)
+    job = query.first()
     if not job:
         return False
     db.delete(job)
@@ -295,41 +334,60 @@ def delete_job(db: Session, job_id: int) -> bool:
     refill_top_active_jobs(db, max_active=3)
     return True
 
-def save_qa_answer(db: Session, question: str, answer: str, category: str = "General") -> ApplicationAnswer:
-    """Saves or updates a screening question and verified candidate answer."""
-    qa = db.query(ApplicationAnswer).filter(ApplicationAnswer.question == question.strip()).first()
+def save_qa_answer(db: Session, question: str, answer: str, category: str = "General", user_id: Optional[int] = None) -> ApplicationAnswer:
+    """Saves or updates a screening question and verified candidate answer scoped to user_id."""
+    clean_q = question.strip()
+    query = db.query(ApplicationAnswer).filter(ApplicationAnswer.question == clean_q)
+    if user_id is not None:
+        query = query.filter(ApplicationAnswer.user_id == user_id)
+    qa = query.first()
     if not qa:
-        qa = ApplicationAnswer(question=question.strip())
+        qa = ApplicationAnswer(question=clean_q, user_id=user_id)
         db.add(qa)
     qa.answer = answer.strip()
     qa.category = category.strip()
+    if user_id is not None:
+        qa.user_id = user_id
     db.commit()
     db.refresh(qa)
     return qa
 
-def get_qa_answer(db: Session, question: str) -> Optional[ApplicationAnswer]:
-    """Finds exact match for question in Q&A bank."""
-    return db.query(ApplicationAnswer).filter(ApplicationAnswer.question == question.strip()).first()
+def get_qa_answer(db: Session, question: str, user_id: Optional[int] = None) -> Optional[ApplicationAnswer]:
+    """Finds exact match for question in Q&A bank for this user (or shared default answers)."""
+    clean_q = question.strip()
+    query = db.query(ApplicationAnswer).filter(ApplicationAnswer.question == clean_q)
+    if user_id is not None:
+        query = query.filter((ApplicationAnswer.user_id == user_id) | (ApplicationAnswer.user_id.is_(None)))
+        # Prefer user-specific answer first
+        user_qa = query.order_by(ApplicationAnswer.user_id.desc().nullslast()).first()
+        return user_qa
+    return query.first()
 
-def list_qa_answers(db: Session) -> List[ApplicationAnswer]:
-    """Returns all cached screening questions and answers."""
-    return db.query(ApplicationAnswer).all()
+def list_qa_answers(db: Session, user_id: Optional[int] = None) -> List[ApplicationAnswer]:
+    """Returns cached screening questions and answers for this user (or global defaults)."""
+    query = db.query(ApplicationAnswer)
+    if user_id is not None:
+        query = query.filter((ApplicationAnswer.user_id == user_id) | (ApplicationAnswer.user_id.is_(None)))
+    return query.all()
 
 
 # =====================================================================
 # Sub-Phase 5.3: Analytics, Funnel Calculations & Performance Metrics
 # =====================================================================
 
-def get_detailed_analytics(db: Session) -> dict:
+def get_detailed_analytics(db: Session, user_id: Optional[int] = None) -> dict:
     """
-    Computes comprehensive analytics across the entire job application lifecycle:
+    Computes comprehensive analytics across the entire job application lifecycle scoped to user_id:
     - Funnel stage transitions and conversion percentages
     - Application velocity (past 24h, 7d, 30d)
     - Source portal distribution
     - High-frequency matching skills and missing skill gap alerts
     - Real-time audit activity feed
     """
-    jobs = db.query(Job).all()
+    query = db.query(Job)
+    if user_id is not None:
+        query = query.filter(Job.user_id == user_id)
+    jobs = query.all()
     total_jobs = len(jobs)
 
     status_counts = {
@@ -496,15 +554,18 @@ def get_detailed_analytics(db: Session) -> dict:
     }
 
 
-def get_applied_today_count(db: Session, target_date: Optional[datetime] = None) -> int:
+def get_applied_today_count(db: Session, target_date: Optional[datetime] = None, user_id: Optional[int] = None) -> int:
     """
-    Returns the total number of applications submitted today (current local calendar day since 00:00:00).
+    Returns the total number of applications submitted today by this user (current local calendar day since 00:00:00).
     Resets cleanly at midnight so that each new day starts with a fresh 0 count.
     """
     now_local = target_date or datetime.now()
     today_date = now_local.date()
     count = 0
-    apps = db.query(Application).filter(Application.status == "Applied").all()
+    query = db.query(Application).filter(Application.status == "Applied")
+    if user_id is not None:
+        query = query.filter(Application.user_id == user_id)
+    apps = query.all()
     for app in apps:
         if app.applied_at:
             app_time = app.applied_at

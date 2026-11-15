@@ -32,10 +32,14 @@ logger = logging.getLogger("main")
 
 from app.config import CORS_ORIGINS, OUTPUT_DIR, BASE_DIR, READY_MATCH_THRESHOLD
 from app.db.session import init_db, get_db
+from app.db.models import User
+from app.core.security import get_optional_current_user
 
 DbSession = Annotated[Session, Depends(get_db)]
+CurrentUser = Annotated[Optional[User], Depends(get_optional_current_user)]
 
 from app.db import crud
+from app.routers.auth import router as auth_router
 from app.agent import scorer, outreach, discover_and_ingest, IngestionReport, qa_bank
 from app.agent.workflow import run_application_workflow, resume_application_workflow
 from app.utils.event_bus import event_bus
@@ -137,6 +141,9 @@ app.add_middleware(
 # Serve generated resume files (PDF/TeX) statically for browser download
 app.mount("/output", StaticFiles(directory=str(OUTPUT_DIR)), name="output")
 
+# Include Authentication Router (Multi-Tenant Phase 1)
+app.include_router(auth_router)
+
 @app.get("/", tags=["Health"])
 @app.get("/api/health", tags=["Health"])
 def health_check():
@@ -196,14 +203,16 @@ async def stream_events(request: Request, topic: str = Query("all")):
     )
 
 @app.post("/api/analyze", response_model=AnalyzeJobResponse, status_code=status.HTTP_201_CREATED, tags=["Agent Core"])
-def analyze_job(req: AnalyzeJobRequest, db: DbSession):
+def analyze_job(req: AnalyzeJobRequest, db: DbSession, current_user: CurrentUser = None):
     """
     Unified Autonomous Pipeline Endpoint:
     1. AI Scorer evaluates match score and skills.
-    2. Saves Job and Evaluation to SQLite.
+    2. Saves Job and Evaluation to SQLite scoped to current_user.
     3. If score >= READY_MATCH_THRESHOLD, the job is marked Ready with the master resume attached.
     4. Saves Application tracking record to SQLite.
     """
+    user_id = current_user.id if current_user else None
+
     # 1. AI ATS Scoring (Phase 1 AI Brain)
     match_result = scorer.analyze_and_score_job(req.job_description)
 
@@ -219,7 +228,8 @@ def analyze_job(req: AnalyzeJobRequest, db: DbSession):
         location=req.location or "",
         portal_name=req.portal_name or "Manual",
         job_url=req.job_url or "",
-        salary_range=req.salary_range or ""
+        salary_range=req.salary_range or "",
+        user_id=user_id
     )
 
     # 3. Persist Evaluation to SQLite
@@ -250,7 +260,8 @@ def analyze_job(req: AnalyzeJobRequest, db: DbSession):
         pdf_path=pdf_path or "",
         cold_subject=cold_subject,
         cold_body=cold_body,
-        linkedin_note=linkedin_note
+        linkedin_note=linkedin_note,
+        user_id=user_id
     )
 
     return AnalyzeJobResponse(
@@ -275,16 +286,17 @@ def analyze_job(req: AnalyzeJobRequest, db: DbSession):
     )
 
 @app.post("/api/discover", response_model=IngestionReport, tags=["Agent Core"])
-async def trigger_job_discovery(req: DiscoverJobsRequest):
+async def trigger_job_discovery(req: DiscoverJobsRequest, current_user: CurrentUser = None):
     """
     Unified Multi-Portal Discovery & Autonomous Ingestion Endpoint (Phase 3):
-    1. Scrapes fresh postings across requested portals (LinkedIn, Indeed, Naukri, Glassdoor).
-    2. Smart deduplication filters out already-tracked jobs in SQLite.
+    1. Scrapes fresh postings across requested portals (Naukri, Indeed).
+    2. Smart deduplication filters out already-tracked jobs in SQLite for current_user.
     3. Gemini evaluates ATS match score.
     4. Auto-triages high matches (>= READY_MATCH_THRESHOLD) to 'Ready' with the master resume attached.
     5. Auto-triages low matches (below READY_MATCH_THRESHOLD) to 'Archived'.
     6. Returns structured IngestionReport.
     """
+    user_id = current_user.id if current_user else None
     try:
         report = await discover_and_ingest(
             search_term=req.search_term,
@@ -297,6 +309,7 @@ async def trigger_job_discovery(req: DiscoverJobsRequest):
             experience_level=req.experience_level,
             min_match_score=req.min_match_score,
             max_jobs_to_process=req.max_process,
+            user_id=user_id,
         )
         return report
     except Exception as e:
@@ -305,14 +318,16 @@ async def trigger_job_discovery(req: DiscoverJobsRequest):
 @app.get("/api/jobs", response_model=List[JobListItem], tags=["Pipeline"])
 def list_all_jobs(
     db: DbSession,
+    current_user: CurrentUser = None,
     status_filter: Optional[str] = Query(None, alias="status"),
     days_limit: Optional[int] = Query(7, description="Rolling active window limit in days (default 7 days, 0 or null for all)"),
     skip: int = 0,
     limit: int = 100,
 ):
-    """Retrieves tracked jobs from SQLite with rolling 7-day active filter, evaluations and pipeline status."""
+    """Retrieves tracked jobs from SQLite with rolling 7-day active filter, evaluations and pipeline status scoped strictly to current_user."""
+    user_id = current_user.id if current_user else None
     effective_days = days_limit if (days_limit is not None and days_limit > 0) else None
-    jobs = crud.list_jobs(db=db, skip=skip, limit=limit, status=status_filter, days_limit=effective_days)
+    jobs = crud.list_jobs(db=db, skip=skip, limit=limit, status=status_filter, days_limit=effective_days, user_id=user_id)
     results = []
     for j in jobs:
         ev = j.evaluation
@@ -338,11 +353,13 @@ def list_all_jobs(
 @app.get("/api/jobs/history", tags=["Pipeline"])
 def get_jobs_history(
     db: DbSession,
+    current_user: CurrentUser = None,
     year: Optional[int] = Query(None, description="Filter history by 4-digit year (e.g. 2026)"),
     month: Optional[int] = Query(None, description="Filter history by month (1-12)"),
 ):
-    """Retrieves full historical jobs categorized by month & year into Discovered and Applied."""
-    return crud.get_jobs_history(db=db, year=year, month=month)
+    """Retrieves full historical jobs categorized by month & year into Discovered and Applied scoped to current_user."""
+    user_id = current_user.id if current_user else None
+    return crud.get_jobs_history(db=db, year=year, month=month, user_id=user_id)
 
 def _load_candidate_info():
     """Returns the candidate's personal info from profile.json, or an empty default if unavailable."""
@@ -354,9 +371,10 @@ def _load_candidate_info():
         return PersonalInfo(name="Candidate")
 
 @app.get("/api/jobs/{job_id}", response_model=JobDetailResponse, tags=["Pipeline"])
-def get_job_detail(job_id: int, db: DbSession):
-    """Retrieves complete details for a single job including evaluation and application state."""
-    job = crud.get_job(db=db, job_id=job_id)
+def get_job_detail(job_id: int, db: DbSession, current_user: CurrentUser = None):
+    """Retrieves complete details for a single job including evaluation and application state scoped to current_user."""
+    user_id = current_user.id if current_user else None
+    job = crud.get_job(db=db, job_id=job_id, user_id=user_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     
@@ -419,9 +437,10 @@ def get_job_detail(job_id: int, db: DbSession):
     )
 
 @app.get("/api/jobs/{job_id}/resume", tags=["Pipeline"])
-def get_job_resume(job_id: int, db: DbSession):
-    """Fetches the generated resume content and download paths."""
-    job = crud.get_job(db=db, job_id=job_id)
+def get_job_resume(job_id: int, db: DbSession, current_user: CurrentUser = None):
+    """Fetches the generated resume content and download paths scoped to current_user."""
+    user_id = current_user.id if current_user else None
+    job = crud.get_job(db=db, job_id=job_id, user_id=user_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     app_rec = job.applications[0] if job.applications else None
@@ -442,26 +461,29 @@ def get_job_resume(job_id: int, db: DbSession):
     }
 
 @app.patch("/api/jobs/{job_id}/status", tags=["Pipeline"])
-def update_job_status(job_id: int, req: UpdateStatusRequest, db: DbSession):
-    """Updates application pipeline status (e.g. Saved -> Tailored -> Applied -> Interview)."""
-    job = crud.get_job(db=db, job_id=job_id)
+def update_job_status(job_id: int, req: UpdateStatusRequest, db: DbSession, current_user: CurrentUser = None):
+    """Updates application pipeline status scoped to current_user."""
+    user_id = current_user.id if current_user else None
+    job = crud.get_job(db=db, job_id=job_id, user_id=user_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-    app_rec = crud.create_or_update_application(db=db, job_id=job.id, status=req.status, notes=req.notes or "")
+    app_rec = crud.create_or_update_application(db=db, job_id=job.id, status=req.status, notes=req.notes or "", user_id=user_id)
     return {"status": "success", "job_id": job.id, "new_status": app_rec.status}
 
 @app.delete("/api/jobs/{job_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["Pipeline"])
-def delete_tracked_job(job_id: int, db: DbSession):
-    """Deletes a job and cascades deletion to all associated evaluations and application data."""
-    deleted = crud.delete_job(db=db, job_id=job_id)
+def delete_tracked_job(job_id: int, db: DbSession, current_user: CurrentUser = None):
+    """Deletes a job and cascades deletion to all associated evaluations and application data scoped to current_user."""
+    user_id = current_user.id if current_user else None
+    deleted = crud.delete_job(db=db, job_id=job_id, user_id=user_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Job not found")
     return None
 
 @app.get("/api/metrics", response_model=PipelineMetrics, tags=["Dashboard"])
-def get_pipeline_metrics(db: DbSession):
-    """Calculates live metrics for the dashboard cards (active 7-day rolling window)."""
-    jobs = crud.list_jobs(db=db, skip=0, limit=1000, days_limit=7)
+def get_pipeline_metrics(db: DbSession, current_user: CurrentUser = None):
+    """Calculates live metrics for the dashboard cards scoped strictly to current_user (active 7-day rolling window)."""
+    user_id = current_user.id if current_user else None
+    jobs = crud.list_jobs(db=db, skip=0, limit=1000, days_limit=7, user_id=user_id)
     total = len(jobs)
     scores = [j.evaluation.match_score for j in jobs if j.evaluation]
     avg_score = round(sum(scores) / len(scores), 1) if scores else 0.0
@@ -470,7 +492,7 @@ def get_pipeline_metrics(db: DbSession):
     interview_count = sum(1 for j in jobs if j.applications and j.applications[0].status == "Interview")
     offer_count = sum(1 for j in jobs if j.applications and j.applications[0].status == "Offer")
     ready_count = sum(1 for j in jobs if j.applications and j.applications[0].status == "Ready")
-    applied_today = crud.get_applied_today_count(db)
+    applied_today = crud.get_applied_today_count(db, user_id=user_id)
 
     max_daily = 7
     try:
@@ -596,12 +618,13 @@ def download_candidate_resume_pdf(inline: bool = False):
         raise HTTPException(status_code=500, detail=f"Failed to generate resume PDF: {str(e)}")
 
 @app.get("/api/jobs/{job_id}/tailored-resume-pdf", tags=["Applications"])
-def download_tailored_resume_pdf(job_id: int, db: DbSession, inline: bool = False):
+def download_tailored_resume_pdf(job_id: int, db: DbSession, inline: bool = False, current_user: CurrentUser = None):
     """
-    Downloads or previews the ATS-tailored PDF resume for a specific job.
+    Downloads or previews the ATS-tailored PDF resume for a specific job scoped to current_user.
     Supports inline=True for iframe preview and inline=False for download.
     """
-    job = crud.get_job(db=db, job_id=job_id)
+    user_id = current_user.id if current_user else None
+    job = crud.get_job(db=db, job_id=job_id, user_id=user_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 
@@ -639,7 +662,7 @@ def download_tailored_resume_pdf(job_id: int, db: DbSession, inline: bool = Fals
 # =====================================================================
 
 @app.post("/api/workflow/apply", response_model=WorkflowStatusResponse, tags=["Workflow"])
-async def trigger_apply_workflow(req: ApplyWorkflowRequest, db: DbSession):
+async def trigger_apply_workflow(req: ApplyWorkflowRequest, db: DbSession, current_user: CurrentUser = None):
     """
     Sub-Phase 4.4: Triggers the LangGraph Assisted/Autonomous Application State Machine.
     - Evaluates job match (if not already evaluated).
@@ -650,7 +673,8 @@ async def trigger_apply_workflow(req: ApplyWorkflowRequest, db: DbSession):
     NOTE: Runs in a background thread via asyncio.to_thread to prevent blocking the
     FastAPI event loop during long-running Playwright + Gemini operations.
     """
-    job = crud.get_job(db=db, job_id=req.job_id)
+    user_id = current_user.id if current_user else None
+    job = crud.get_job(db=db, job_id=req.job_id, user_id=user_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 
@@ -768,19 +792,21 @@ async def resume_apply_workflow(thread_id: str, req: ResumeWorkflowRequest):
         raise HTTPException(status_code=500, detail=f"Workflow resume error: {str(e)}")
 
 @app.get("/api/workflow/qa", response_model=List[QAItemResponse], tags=["Workflow"])
-def get_screening_qa_bank(db: DbSession):
-    """Returns all verified screening questions and answers stored in the memory bank."""
+def get_screening_qa_bank(db: DbSession, current_user: CurrentUser = None):
+    """Returns all verified screening questions and answers stored in the memory bank scoped to current_user."""
+    user_id = current_user.id if current_user else None
     qa_bank.seed_default_qa_bank()
-    records = crud.list_qa_answers(db)
+    records = crud.list_qa_answers(db, user_id=user_id)
     return [
         QAItemResponse(id=r.id, question=r.question, answer=r.answer, category=r.category)
         for r in records
     ]
 
 @app.post("/api/workflow/qa", response_model=QAItemResponse, tags=["Workflow"])
-def save_screening_qa_item(req: SaveQARequest, db: DbSession):
-    """Saves or updates a screening question in the candidate's memory bank."""
-    qa = crud.save_qa_answer(db, question=req.question, answer=req.answer, category=req.category)
+def save_screening_qa_item(req: SaveQARequest, db: DbSession, current_user: CurrentUser = None):
+    """Saves or updates a screening question in the candidate's memory bank scoped to current_user."""
+    user_id = current_user.id if current_user else None
+    qa = crud.save_qa_answer(db, question=req.question, answer=req.answer, category=req.category, user_id=user_id)
     return QAItemResponse(id=qa.id, question=qa.question, answer=qa.answer, category=qa.category)
 
 

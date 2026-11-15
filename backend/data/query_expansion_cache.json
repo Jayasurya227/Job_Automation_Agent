@@ -86,5 +86,16 @@
       "Applied Machine Learning Engineer"
     ],
     "combined_query": "Machine Learning Engineer, AI Engineer, ML Engineer"
+  },
+  "junior ai engineer": {
+    "primary_role": "Junior AI Engineer",
+    "domain_category": "ai_ml",
+    "search_synonyms": [
+      "AI Engineer",
+      "Associate AI Engineer",
+      "Machine Learning Engineer",
+      "AI/ML Developer"
+    ],
+    "combined_query": "AI Engineer, Machine Learning Engineer, Junior AI Developer"
   }
 }

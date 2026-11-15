@@ -1,7 +1,7 @@
 """
 Autonomous Multi-Portal Job Scraper & Discovery Engine.
 Integrates JobSpy high-speed aggregation with Playwright stealth browser extraction.
-Supports LinkedIn, Indeed, Naukri, Glassdoor, and ZipRecruiter.
+Supports Naukri and Indeed.
 Includes smart deduplication against SQLite jobs.db and anti-bot pacing.
 Part of Phase 3: Browser Automation & Job Discovery.
 """
@@ -41,7 +41,7 @@ class DiscoveredJob(BaseModel):
     title: str = Field(..., description="Job title")
     company: str = Field(..., description="Company or hiring organization")
     location: str = Field(default="", description="Location or remote indicator")
-    portal: str = Field(..., description="Portal name: linkedin, indeed, naukri, glassdoor, etc.")
+    portal: str = Field(..., description="Portal name: naukri, indeed, etc.")
     job_url: str = Field(..., description="Direct URL to the job listing")
     description: str = Field(default="", description="Full or excerpt job description")
     salary: str = Field(default="", description="Advertised salary or compensation info")
@@ -171,11 +171,7 @@ def _run_jobspy_sync(
     # Map portal names to JobSpy supported site names
     valid_sites = []
     site_mapping = {
-        "linkedin": "linkedin",
         "indeed": "indeed",
-        "glassdoor": "glassdoor",
-        "zip_recruiter": "zip_recruiter",
-        "ziprecruiter": "zip_recruiter",
     }
 
     for p in portals:
@@ -881,7 +877,7 @@ async def discover_jobs(
     """
     High-level orchestrator for job discovery across multiple portals.
     Supports dynamic multi-role and multi-location scanning based on user's saved preferences.
-    Combines JobSpy (LinkedIn, Indeed, Glassdoor) and Playwright (Naukri).
+    Combines JobSpy (Indeed) and Playwright (Naukri).
     Deduplicates against SQLite jobs.db so previously seen jobs are filtered out.
     """
     prefs = load_candidate_preferences()
@@ -972,8 +968,8 @@ async def discover_jobs(
         crawl_tasks = []
         task_names = []
 
-        # 1. JobSpy Aggregation (Indeed, LinkedIn, Glassdoor, ZipRecruiter)
-        jobspy_portals = [p for p in portal_list if p.lower() in ["linkedin", "indeed", "glassdoor", "zip_recruiter", "ziprecruiter"]]
+        # 1. JobSpy Aggregation (Indeed)
+        jobspy_portals = [p for p in portal_list if p.lower() in ["indeed"]]
         if jobspy_portals:
             if effective_freshness is not None and int(effective_freshness) == 0:
                 hours_old = None  # All time / No 24-hour limit

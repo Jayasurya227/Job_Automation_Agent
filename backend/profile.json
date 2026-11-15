@@ -29,7 +29,7 @@
     "freshness_days": 0,
     "experience_level": "all",
     "manual_discovery_limit": 50,
-    "autopilot_enabled": true,
+    "autopilot_enabled": false,
     "autopilot_auto_apply_score": 75,
     "autopilot_max_daily_apps": 30,
     "autopilot_run_hour": 10,
