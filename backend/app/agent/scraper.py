@@ -50,8 +50,16 @@ class DiscoveredJob(BaseModel):
     external_url: Optional[str] = Field(default=None, description="Direct employer ATS link if external")
 
 
-def load_candidate_preferences() -> Dict[str, Any]:
-    """Loads target job titles and locations from profile.json."""
+def load_candidate_preferences(user_id: Optional[int] = None) -> Dict[str, Any]:
+    """Loads target job titles and locations from profile.json scoped to user_id."""
+    if user_id is not None:
+        try:
+            from app.core.user_storage import load_user_profile
+            prof = load_user_profile(user_id)
+            return prof.preferences.model_dump()
+        except Exception as e:
+            logger.warning(f"Could not load preferences for user {user_id}: {e}")
+
     if not PROFILE_PATH.exists():
         return {
             "target_roles": ["Python Developer", "Junior AI Engineer"],
@@ -534,9 +542,10 @@ def _scrape_naukri_sync(
     target_roles: Optional[List[str]] = None,
     combined_query: Optional[str] = None,
     max_pages: int = 5,
+    user_id: Optional[int] = None,
 ) -> List[DiscoveredJob]:
     """
-    Production-Standard Synchronous Stealth Scraper for Naukri.com.
+    Production-Standard Synchronous Stealth Scraper for Naukri.com scoped to user_id.
     Runs inside a dedicated worker thread (asyncio.to_thread) to completely bypass
     Windows event loop conflicts (NotImplementedError in Uvicorn).
     Uses installed Google Chrome (channel='chrome') + user session cookies + stealth flags
@@ -548,7 +557,7 @@ def _scrape_naukri_sync(
 
     # Determine effective experience filter from profile if not provided
     if experience_level is None:
-        prefs = load_candidate_preferences()
+        prefs = load_candidate_preferences(user_id=user_id)
         experience_level = prefs.get("experience_level", "0-1")
 
     # Build initial Page 1 URL using dedicated multi-page generator
@@ -561,7 +570,11 @@ def _scrape_naukri_sync(
         experience_level=experience_level,
     )
 
-    session_dir = Path(DEFAULT_SESSION_DIR)
+    if user_id is not None:
+        from app.core.user_storage import get_user_browser_session_dir
+        session_dir = get_user_browser_session_dir(user_id)
+    else:
+        session_dir = Path(DEFAULT_SESSION_DIR)
     session_dir.mkdir(parents=True, exist_ok=True)
     sanitize_session_preferences(session_dir)
 
@@ -844,9 +857,10 @@ async def scrape_naukri_playwright(
     target_roles: Optional[List[str]] = None,
     combined_query: Optional[str] = None,
     max_pages: int = 5,
+    user_id: Optional[int] = None,
 ) -> List[DiscoveredJob]:
     """
-    Async interface for the Naukri stealth scraper.
+    Async interface for the Naukri stealth scraper scoped to user_id.
     Delegates execution to _scrape_naukri_sync in a dedicated worker thread
     to guarantee 100% Windows event-loop isolation and zero NotImplementedError crashes.
     """
@@ -860,6 +874,7 @@ async def scrape_naukri_playwright(
         target_roles=target_roles,
         combined_query=combined_query,
         max_pages=max_pages,
+        user_id=user_id,
     )
 
 
@@ -873,14 +888,15 @@ async def discover_jobs(
     freshness_days: int = 1,
     experience_level: Optional[str] = None,
     deduplicate: bool = True,
+    user_id: Optional[int] = None,
 ) -> List[DiscoveredJob]:
     """
-    High-level orchestrator for job discovery across multiple portals.
+    High-level orchestrator for job discovery across multiple portals scoped to user_id.
     Supports dynamic multi-role and multi-location scanning based on user's saved preferences.
     Combines JobSpy (Indeed) and Playwright (Naukri).
     Deduplicates against SQLite jobs.db so previously seen jobs are filtered out.
     """
-    prefs = load_candidate_preferences()
+    prefs = load_candidate_preferences(user_id=user_id)
     saved_roles = prefs.get("target_roles", [])
     preferred_locs = prefs.get("preferred_locations", ["Hyderabad", "Bengaluru"])
     saved_freshness = prefs.get("freshness_days", 1)
@@ -1010,6 +1026,7 @@ async def discover_jobs(
                 target_roles=deduped_targets,
                 combined_query=combined_q,
                 max_pages=5,
+                user_id=user_id,
             ))
             task_names.append("Naukri")
 
@@ -1039,8 +1056,8 @@ async def discover_jobs(
             if batch_key in seen_in_batch:
                 continue
 
-            # Check if this job exists in SQLite database
-            exists_in_db = job_exists(db, job_url=job.job_url, title=job.title, company=job.company)
+            # Check if this job exists in SQLite database scoped to user_id
+            exists_in_db = job_exists(db, job_url=job.job_url, title=job.title, company=job.company, user_id=user_id)
             if exists_in_db:
                 logger.debug(f"Skipping duplicate job: {job.title} at {job.company}")
                 continue

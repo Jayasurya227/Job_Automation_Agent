@@ -29,6 +29,7 @@ if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
 from app.config import DATA_DIR
+from app.core.user_storage import get_user_browser_session_dir
 from app.agent.browser import (
     DEFAULT_SESSION_DIR,
     sanitize_session_preferences,
@@ -51,6 +52,8 @@ class PendingAuthSession:
     page: Page
     created_at: float
     timeout_sec: float = 300.0  # 5 minutes keep-alive for user to enter SMS/email OTP
+    user_id: int = 1
+    session_dir: Optional[Path] = None
 
 
 class HeadlessAuthManager:
@@ -112,13 +115,15 @@ class HeadlessAuthManager:
         password: Optional[str] = None,
         use_otp_mode: bool = False,
         custom_session_id: Optional[str] = None,
+        user_id: int = 1,
     ) -> Dict[str, Any]:
         """
-        Initiates headless Naukri login using Playwright async stealth.
+        Initiates headless Naukri login using Playwright async stealth scoped strictly to user_id.
         """
         await self.cleanup_expired_sessions()
         session_id = custom_session_id or str(uuid.uuid4())
-        sanitize_session_preferences(self.session_dir)
+        target_session_dir = get_user_browser_session_dir(user_id)
+        sanitize_session_preferences(target_session_dir)
 
         p = None
         context = None
@@ -128,7 +133,7 @@ class HeadlessAuthManager:
             launch_args.extend(["--no-first-run", "--no-default-browser-check"])
 
             launch_kwargs = {
-                "user_data_dir": str(self.session_dir),
+                "user_data_dir": str(target_session_dir),
                 "headless": True,
                 "args": launch_args,
                 "user_agent": DEFAULT_USER_AGENT,
@@ -161,13 +166,14 @@ class HeadlessAuthManager:
             cookies = await context.cookies()
             is_logged_in, _ = check_portal_login_sync("Naukri", page.url, cookies) if "nlogin" not in page.url else (False, "")
             if is_logged_in:
-                self._save_session_marker(page, cookies, portal="Naukri")
+                self._save_session_marker(page, cookies, portal="Naukri", target_dir=target_session_dir)
                 await context.close()
                 await p.stop()
                 return {
                     "status": "SUCCESS",
                     "message": "Already authenticated into Naukri candidate session.",
                     "portal": "naukri",
+                    "user_id": user_id,
                 }
 
             if password and not use_otp_mode:
@@ -205,13 +211,14 @@ class HeadlessAuthManager:
                         cookies = await context.cookies()
                         auth_ok, reason = check_portal_login_sync("Naukri", page.url, cookies)
                         if auth_ok:
-                            self._save_session_marker(page, cookies, portal="Naukri")
+                            self._save_session_marker(page, cookies, portal="Naukri", target_dir=target_session_dir)
                             await context.close()
                             await p.stop()
                             return {
                                 "status": "SUCCESS",
                                 "message": "Successfully logged into Naukri candidate profile!",
                                 "portal": "naukri",
+                                "user_id": user_id,
                             }
 
                     err_el = await page.query_selector(".server-err, .err, .error-message, [class*='errorMessage']")
@@ -236,12 +243,15 @@ class HeadlessAuthManager:
                             context=context,
                             page=page,
                             created_at=time.time(),
+                            user_id=user_id,
+                            session_dir=target_session_dir,
                         )
                         return {
                             "status": "OTP_REQUIRED",
                             "session_id": session_id,
                             "portal": "naukri",
                             "message": "Naukri sent a 6-digit verification OTP to your registered mobile number.",
+                            "user_id": user_id,
                         }
 
             if use_otp_mode or not password:
@@ -271,12 +281,15 @@ class HeadlessAuthManager:
                         context=context,
                         page=page,
                         created_at=time.time(),
+                        user_id=user_id,
+                        session_dir=target_session_dir,
                     )
                     return {
                         "status": "OTP_REQUIRED",
                         "session_id": session_id,
                         "portal": "naukri",
                         "message": f"Naukri sent an OTP to {identifier}.",
+                        "user_id": user_id,
                     }
 
             self._active_sessions[session_id] = PendingAuthSession(
@@ -287,12 +300,15 @@ class HeadlessAuthManager:
                 context=context,
                 page=page,
                 created_at=time.time(),
+                user_id=user_id,
+                session_dir=target_session_dir,
             )
             return {
                 "status": "OTP_REQUIRED",
                 "session_id": session_id,
                 "portal": "naukri",
                 "message": "Verification code requested. Please enter the OTP sent to your phone.",
+                "user_id": user_id,
             }
 
         except Exception as e:
@@ -309,8 +325,13 @@ class HeadlessAuthManager:
                     pass
             return {"status": "ERROR", "message": f"Headless login error: {str(e)}"}
 
-    async def verify_naukri_otp(self, session_id: str, otp: str) -> Dict[str, Any]:
-        """Submits user OTP to active headless Naukri browser session."""
+    async def verify_naukri_otp(
+        self,
+        session_id: str,
+        otp: str,
+        expected_user_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Submits user OTP to active headless Naukri browser session with user ownership validation."""
         clean_otp = otp.strip().replace(" ", "").replace("-", "")
         if not clean_otp or len(clean_otp) < 4:
             return {"status": "ERROR", "message": "Invalid OTP format. Please enter a valid 6-digit OTP."}
@@ -322,10 +343,21 @@ class HeadlessAuthManager:
                 "message": "Login session expired or not found. Please click Connect to request a fresh OTP.",
             }
 
+        # Multi-user security validation
+        if expected_user_id is not None and session.user_id != expected_user_id:
+            logger.warning(
+                f"Unauthorized OTP submission: session user_id={session.user_id} does not match expected_user_id={expected_user_id}"
+            )
+            return {
+                "status": "ERROR",
+                "message": "Access denied: This login session belongs to another user account.",
+            }
+
+        target_dir = session.session_dir or get_user_browser_session_dir(session.user_id)
         page = session.page
         context = session.context
         try:
-            logger.info(f"Entering OTP for session {session_id}...")
+            logger.info(f"Entering OTP for session {session_id} (User {session.user_id})...")
             otp_selectors = [
                 "input[placeholder*='OTP']",
                 "input[name*='otp']",
@@ -378,14 +410,15 @@ class HeadlessAuthManager:
                 cookies = await context.cookies()
                 auth_ok, auth_reason = check_portal_login_sync("Naukri", page.url, cookies)
                 if auth_ok:
-                    self._save_session_marker(page, cookies, portal="Naukri")
-                    logger.info(f"✅ OTP Verified successfully for {session.identifier}!")
+                    self._save_session_marker(page, cookies, portal="Naukri", target_dir=target_dir)
+                    logger.info(f"✅ OTP Verified successfully for User {session.user_id} ({session.identifier})!")
                     await self.close_session(session_id)
                     return {
                         "status": "SUCCESS",
                         "message": "Naukri account successfully connected and verified via Mobile OTP!",
                         "portal": "naukri",
                         "cookie_count": len(cookies),
+                        "user_id": session.user_id,
                     }
 
                 err_el = await page.query_selector(".server-err, .err, [class*='error'], text='Invalid OTP', text='Incorrect OTP'")
@@ -397,13 +430,14 @@ class HeadlessAuthManager:
             cookies = await context.cookies()
             auth_ok, auth_reason = check_portal_login_sync("Naukri", page.url, cookies)
             if auth_ok:
-                self._save_session_marker(page, cookies, portal="Naukri")
+                self._save_session_marker(page, cookies, portal="Naukri", target_dir=target_dir)
                 await self.close_session(session_id)
                 return {
                     "status": "SUCCESS",
                     "message": "Naukri account successfully connected!",
                     "portal": "naukri",
                     "cookie_count": len(cookies),
+                    "user_id": session.user_id,
                 }
 
             return {
@@ -723,9 +757,17 @@ class HeadlessAuthManager:
             logger.error(f"Error during Indeed code verification: {e}")
             return {"status": "ERROR", "message": f"Verification error: {str(e)}"}
 
-    def _save_session_marker(self, page: Page, cookies: list[dict], portal: str = "Naukri") -> None:
+    def _save_session_marker(
+        self,
+        page: Page,
+        cookies: list[dict],
+        portal: str = "Naukri",
+        target_dir: Optional[Path] = None,
+    ) -> None:
         """Saves session_verified.json into respective session_dir."""
-        target_dir = self.indeed_session_dir if portal.lower() == "indeed" else self.session_dir
+        if not target_dir:
+            target_dir = self.indeed_session_dir if portal.lower() == "indeed" else self.session_dir
+        target_dir = Path(target_dir)
         target_dir.mkdir(parents=True, exist_ok=True)
         marker_file = target_dir / "session_verified.json"
         try:

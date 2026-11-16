@@ -156,13 +156,46 @@ def health_check():
     }
 
 @app.get("/api/events/stream", tags=["Events"])
-async def stream_events(request: Request, topic: str = Query("all")):
+async def stream_events(
+    request: Request,
+    topic: str = Query("all"),
+    token: Optional[str] = Query(None, description="Optional JWT token for event stream authorization")
+):
     """
-    Sub-Phase 5.1: Real-Time Server-Sent Events (SSE) Stream.
+    Sub-Phase 5.1: Real-Time Server-Sent Events (SSE) Stream with Anti-Eavesdropping Guard.
     Clients subscribe to real-time workflow, discovery, or system progress events.
     Supports topic filtering (e.g. topic=workflow:1, topic=discovery, or topic=all).
     Includes automatic 15-second heartbeat ping to prevent timeouts.
     """
+    from fastapi.responses import JSONResponse
+    from app.core.security import decode_access_token
+
+    # Extract user identity from Authorization header or query param
+    auth_header = request.headers.get("Authorization", "")
+    jwt_str = token
+    if not jwt_str and auth_header.startswith("Bearer "):
+        jwt_str = auth_header.split(" ", 1)[1].strip()
+
+    request_user_id = None
+    if jwt_str:
+        payload = decode_access_token(jwt_str)
+        if payload and "sub" in payload:
+            try:
+                request_user_id = int(payload["sub"])
+            except ValueError:
+                pass
+
+    # Anti-Eavesdropping Guard for private channels (e.g. autopilot:2)
+    if topic.startswith("autopilot:"):
+        target_uid_str = topic.split(":", 1)[1]
+        if not target_uid_str.isdigit():
+            return JSONResponse(status_code=400, content={"detail": "Invalid user channel format"})
+        target_uid = int(target_uid_str)
+        if request_user_id is None:
+            return JSONResponse(status_code=401, content={"detail": "Authentication required to subscribe to private channels"})
+        if request_user_id != target_uid:
+            return JSONResponse(status_code=403, content={"detail": "Forbidden: Cannot subscribe to another user's live stream"})
+
     queue = await event_bus.subscribe(topic=topic)
 
     async def event_generator():
@@ -515,33 +548,34 @@ def get_pipeline_metrics(db: DbSession, current_user: CurrentUser = None):
 
 
 @app.get("/api/profile", response_model=CandidateProfile, tags=["Profile"])
-def get_candidate_profile():
-    """Fetches candidate profile from profile.json."""
-    profile_file = BASE_DIR / "profile.json"
-    if not profile_file.exists():
-        raise HTTPException(status_code=404, detail="profile.json not found")
-    with open(profile_file, "r", encoding="utf-8") as f:
-        return CandidateProfile(**json.load(f))
+def get_candidate_profile(current_user: CurrentUser = None):
+    """Fetches candidate profile from user's isolated profile.json."""
+    from app.core.user_storage import load_user_profile
+    user_id = current_user.id if current_user else 1
+    return load_user_profile(user_id=user_id)
 
 @app.put("/api/profile", response_model=CandidateProfile, tags=["Profile"])
-def update_candidate_profile(profile_data: CandidateProfile):
-    """Updates candidate profile in profile.json dynamically (Rule 5: Zero Stale Data)."""
-    profile_file = BASE_DIR / "profile.json"
-    with open(profile_file, "w", encoding="utf-8") as f:
-        json.dump(profile_data.model_dump(), f, indent=2)
+def update_candidate_profile(profile_data: CandidateProfile, current_user: CurrentUser = None):
+    """Updates candidate profile in user's isolated profile.json dynamically (Rule 5: Zero Stale Data)."""
+    from app.core.user_storage import save_user_profile
+    from app.agent.scheduler import autopilot_scheduler
+    user_id = current_user.id if current_user else 1
+    save_user_profile(user_id=user_id, profile=profile_data)
     try:
-        from app.agent.scheduler import autopilot_scheduler
         autopilot_scheduler.nudge()
     except Exception:
         pass
     return profile_data
 
 @app.post("/api/profile/upload-resume", tags=["Profile"])
-async def upload_candidate_resume(file: UploadFile = File(...)):
+async def upload_candidate_resume(file: UploadFile = File(...), current_user: CurrentUser = None):
     """
     Uploads a PDF resume, parses skills & projects using AI,
-    and automatically updates the candidate master profile.
+    and automatically updates the candidate master profile in their isolated vault.
     """
+    from app.core.user_storage import get_user_resume_path, load_user_profile
+    user_id = current_user.id if current_user else 1
+
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files (.pdf) are supported for resume parsing.")
 
@@ -549,12 +583,15 @@ async def upload_candidate_resume(file: UploadFile = File(...)):
     if len(contents) == 0:
         raise HTTPException(status_code=400, detail="Uploaded file is empty.")
 
-    # 1. Save uploaded PDF to data directory
-    save_path = BASE_DIR / "data" / "uploaded_resume.pdf"
+    if not contents.startswith(b"%PDF"):
+        raise HTTPException(status_code=400, detail="File is not a valid PDF (missing %PDF magic header).")
+
+    # 1. Save uploaded PDF to user's isolated vault
+    save_path = get_user_resume_path(user_id)
     with open(save_path, "wb") as f:
         f.write(contents)
 
-    # 2. Extract text from PDF (as fallback)
+    # 2. Extract text from PDF
     text = ""
     try:
         from app.agent.resume_parser import extract_text_from_pdf, parse_resume_content
@@ -562,9 +599,10 @@ async def upload_candidate_resume(file: UploadFile = File(...)):
     except Exception as e:
         logger.warning(f"Text extraction warning: {e}")
 
-    # 3. AI extraction (direct multimodal PDF with fallback) & merge into profile.json
+    # 3. AI extraction & merge into user's profile.json
     try:
-        updated_profile = parse_resume_content(resume_text=text, pdf_bytes=contents)
+        from app.agent.resume_parser import parse_resume_content
+        updated_profile = parse_resume_content(resume_text=text, pdf_bytes=contents, user_id=user_id)
         return {
             "status": "success",
             "message": f"Resume '{file.filename}' parsed and saved to Master Profile!",
@@ -574,31 +612,42 @@ async def upload_candidate_resume(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"AI Resume Parsing error: {str(e)}")
 
-@app.get("/api/profile/download-resume-pdf", tags=["Profile"])
-def download_candidate_resume_pdf(inline: bool = False):
-    """
-    Generates and returns the latest Candidate Master Resume in ATS-standard PDF format.
-    Serves uploaded resume if present, or dynamically generates from profile.json.
-    Supports inline=True for modal iframe preview and inline=False for download.
-    """
-    profile_file = BASE_DIR / "profile.json"
-    candidate_name = "Candidate"
-    profile_dict = {}
-    if profile_file.exists():
-        try:
-            with open(profile_file, "r", encoding="utf-8") as f:
-                profile_dict = json.load(f)
-            candidate_name = profile_dict.get("personal_info", {}).get("name", "Candidate")
-        except Exception:
-            pass
+@app.get("/api/profile/download-uploaded-resume", tags=["Profile"])
+def download_uploaded_resume(inline: bool = False, current_user: CurrentUser = None):
+    """Downloads candidate's original uploaded master resume from their isolated vault."""
+    from app.core.user_storage import get_user_resume_path, load_user_profile
+    user_id = current_user.id if current_user else 1
+    resume_path = get_user_resume_path(user_id)
+    if not resume_path.exists():
+        raise HTTPException(status_code=404, detail="No uploaded resume found for this candidate.")
 
+    profile = load_user_profile(user_id)
+    candidate_name = getattr(profile.personal_info, "name", "Candidate") or "Candidate"
+    safe_name = re.sub(r"[^a-zA-Z0-9_-]", "_", candidate_name)
+    download_filename = f"{safe_name}_Master_Resume.pdf"
+
+    return FileResponse(
+        path=str(resume_path),
+        filename=download_filename if not inline else None,
+        media_type="application/pdf",
+        content_disposition_type="inline" if inline else "attachment"
+    )
+
+@app.get("/api/profile/download-resume-pdf", tags=["Profile"])
+def download_candidate_resume_pdf(inline: bool = False, current_user: CurrentUser = None):
+    """Generates or downloads candidate resume in ATS PDF format scoped strictly to current_user."""
+    from app.core.user_storage import get_user_resume_path, load_user_profile
+    user_id = current_user.id if current_user else 1
+    resume_path = get_user_resume_path(user_id)
+
+    profile = load_user_profile(user_id)
+    candidate_name = getattr(profile.personal_info, "name", "Candidate") or "Candidate"
     safe_name = re.sub(r"[^a-zA-Z0-9_-]", "_", candidate_name)
     download_filename = f"{safe_name}_Resume.pdf"
 
-    uploaded_pdf = BASE_DIR / "data" / "uploaded_resume.pdf"
-    if uploaded_pdf.exists():
+    if resume_path.exists():
         return FileResponse(
-            path=str(uploaded_pdf),
+            path=str(resume_path),
             filename=download_filename if not inline else None,
             media_type="application/pdf",
             content_disposition_type="inline" if inline else "attachment"
@@ -606,7 +655,7 @@ def download_candidate_resume_pdf(inline: bool = False):
 
     try:
         from app.agent.pdf_generator import generate_candidate_master_pdf
-        pdf_path = generate_candidate_master_pdf(profile_dict, output_filename=download_filename)
+        pdf_path = generate_candidate_master_pdf(profile.model_dump(), output_filename=download_filename)
         return FileResponse(
             path=pdf_path,
             filename=download_filename if not inline else None,
@@ -865,48 +914,91 @@ def update_user_settings(req: UpdateAccountSettingsRequest):
 
 
 # =====================================================================
-# Auto-Pilot Scheduling Endpoints
+# Auto-Pilot Scheduling & Task Queue Endpoints (Multi-Tenant Scoped)
 # =====================================================================
+from app.agent.scheduler import autopilot_scheduler
+from app.agent.task_queue import task_queue
+
 @app.get("/api/autopilot/status", tags=["Auto-Pilot"])
-def get_autopilot_status():
-    """Returns current operational status of the Smart Auto-Pilot scheduler."""
-    from app.agent.scheduler import autopilot_scheduler
-    return autopilot_scheduler.get_status()
+def get_autopilot_status(current_user: CurrentUser = None):
+    """Returns current auto-pilot execution state and next schedule, scoped strictly to current_user."""
+    user_id = current_user.id if current_user else 1
+    return autopilot_scheduler.get_status(user_id=user_id)
 
 
 @app.post("/api/autopilot/run-now", tags=["Auto-Pilot"])
-async def trigger_autopilot_now():
-    """Immediately triggers an on-demand Auto-Pilot run in the background."""
-    from app.agent.scheduler import autopilot_scheduler, get_portal_timeline_slot
-    slot = get_portal_timeline_slot()
-    asyncio.create_task(autopilot_scheduler.execute_run(trigger_source="manual_run_now"))
+async def trigger_autopilot_now(current_user: CurrentUser = None):
+    """Triggers an immediate discovery + apply run outside the regular schedule, scoped strictly to current_user."""
+    user_id = current_user.id if current_user else 1
+    logger.info(f"Manual auto-pilot trigger requested for User {user_id}")
+    task_id = await autopilot_scheduler.trigger_user_now(user_id=user_id)
     return {
-        "status": "started",
-        "message": f"Smart Auto-Pilot launched for {slot['portal_label']} ({slot['slot_label']}) in background.",
-        "portal": slot["current_portal"],
-        "portal_label": slot["portal_label"],
-        "slot_label": slot["slot_label"]
+        "status": "triggered",
+        "user_id": user_id,
+        "task_id": task_id,
+        "message": f"Auto-Pilot manual cycle initiated in background queue for User {user_id}."
     }
 
 
+@app.post("/api/autopilot/toggle", tags=["Auto-Pilot"])
+def toggle_autopilot(current_user: CurrentUser = None):
+    """Toggles Auto-Pilot on/off for current_user in private profile vault and nudges the background scheduler."""
+    from app.core.user_storage import load_user_profile, save_user_profile
+    user_id = current_user.id if current_user else 1
+    profile = load_user_profile(user_id)
+    new_state = not getattr(profile.preferences, "autopilot_enabled", False)
+    profile.preferences.autopilot_enabled = new_state
+    save_user_profile(user_id, profile)
+    autopilot_scheduler.nudge()
+    return {
+        "user_id": user_id,
+        "autopilot_enabled": new_state,
+        "message": f"Auto-Pilot {'enabled' if new_state else 'disabled'} for User {user_id}."
+    }
+
+
+@app.get("/api/autopilot/tasks", tags=["Auto-Pilot"])
+def get_user_tasks(current_user: CurrentUser = None):
+    """Returns background tasks strictly belonging to current_user."""
+    user_id = current_user.id if current_user else 1
+    return task_queue.list_user_tasks(user_id)
+
+
+@app.post("/api/autopilot/tasks/{task_id}/cancel", tags=["Auto-Pilot"])
+async def cancel_user_task(task_id: str, current_user: CurrentUser = None):
+    """Cancels a pending task strictly verifying tenant ownership."""
+    from fastapi import HTTPException
+    user_id = current_user.id if current_user else 1
+    task = task_queue.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if task.user_id != user_id:
+        raise HTTPException(status_code=400, detail="Access denied: Cannot cancel tasks belonging to another user.")
+    success = await task_queue.cancel_task(task_id, user_id=user_id)
+    return {"task_id": task_id, "status": "cancelled" if success else "failed"}
+
+
 @app.post("/api/autopilot/boost-profile", tags=["Auto-Pilot"])
-async def trigger_profile_boost():
-    """Triggers an on-demand Naukri Recruiter Profile Boost."""
-    from app.agent.booster import boost_naukri_profile
-    res = await asyncio.to_thread(boost_naukri_profile)
+async def trigger_profile_boost(current_user: CurrentUser = None):
+    """Triggers an on-demand profile booster for current_user's Naukri account."""
+    user_id = current_user.id if current_user else 1
+    logger.info(f"Manual profile boost requested for User {user_id}")
+    from app.agent.booster import boost_naukri_profile_live
+    res = await boost_naukri_profile_live(user_id=user_id)
     return res
 
 
 # =====================================================================
-# Portal Session Endpoints (Naukri Persistent Session)
+# Portal Session Endpoints (Naukri Persistent Session Scoped per User)
 # =====================================================================
 @app.get("/api/portals/naukri/session-status", tags=["Portals"])
-def get_naukri_session_status():
-    """Checks if a valid persistent browser session exists for Naukri."""
+def get_naukri_session_status(current_user: CurrentUser = None):
+    """Checks if a valid persistent browser session exists for Naukri scoped to current_user."""
     import json
     from datetime import datetime, timezone
-    from app.config import DATA_DIR
-    session_dir = DATA_DIR / "browser_session"
+    from app.core.user_storage import get_user_browser_session_dir
+    user_id = current_user.id if current_user else 1
+    session_dir = get_user_browser_session_dir(user_id)
     marker_file = session_dir / "session_verified.json"
     
     is_connected = marker_file.exists()
@@ -946,21 +1038,40 @@ def get_naukri_session_status():
         "session_dir": str(session_dir),
         "verified_at": verified_data.get("verified_at"),
         "cookie_count": verified_data.get("cookie_count", 0),
-        "message": message
+        "message": message,
+        "user_id": user_id,
+    }
+
+
+@app.post("/api/portals/naukri/disconnect", tags=["Portals"])
+def disconnect_naukri_session(current_user: CurrentUser = None):
+    """Safely disconnects Naukri persistent session scoped strictly to current_user."""
+    from app.core.user_storage import get_user_browser_session_dir
+    user_id = current_user.id if current_user else 1
+    session_dir = get_user_browser_session_dir(user_id)
+    marker_file = session_dir / "session_verified.json"
+    if marker_file.exists():
+        marker_file.unlink()
+    return {
+        "status": "disconnected",
+        "portal": "naukri",
+        "user_id": user_id,
+        "message": "Naukri session disconnected successfully."
     }
 
 
 @app.post("/api/portals/naukri/launch-session", tags=["Portals"])
-async def launch_naukri_session():
-    """Launches an interactive headed browser for safe one-time manual login with OTP."""
+async def launch_naukri_session(current_user: CurrentUser = None):
+    """Launches an interactive headed browser for safe one-time manual login with OTP scoped to current_user."""
     import subprocess
     import sys
     import os
-    from app.config import BASE_DIR, DATA_DIR
+    from app.config import BASE_DIR
+    from app.core.user_storage import get_user_browser_session_dir
     from app.agent.browser import sanitize_session_preferences
 
-    # Pre-sanitize session directory to eliminate any off-screen window coordinates
-    session_dir = DATA_DIR / "browser_session"
+    user_id = current_user.id if current_user else 1
+    session_dir = get_user_browser_session_dir(user_id)
     sanitize_session_preferences(session_dir)
 
     script = BASE_DIR / "login_session.py"

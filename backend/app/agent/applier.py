@@ -76,9 +76,16 @@ class EasyApplyFiller:
     stepper navigation, and visual snapshot generation.
     """
 
-    def __init__(self, headless: bool = True):
+    def __init__(self, headless: bool = True, user_id: int = 1):
         self.headless = headless
-        self.profile = load_profile()
+        self.user_id = user_id
+        from app.core.user_storage import (
+            get_user_snapshots_dir,
+            get_user_browser_session_dir,
+        )
+        self.profile = load_profile(user_id=user_id)
+        self.snapshot_dir = get_user_snapshots_dir(user_id)
+        self.browser_session_dir = get_user_browser_session_dir(user_id)
         self.strict = False
         self.unanswered: List[str] = []
         self.current_job_title = ""
@@ -87,7 +94,7 @@ class EasyApplyFiller:
     def _capture_error_snapshot(self, page: Page, tid: str, error_prefix: str = "err") -> Optional[str]:
         """Captures a snapshot ONLY when an error or failure occurs, saving disk space during normal operations."""
         try:
-            error_file = SNAPSHOT_DIR / f"{error_prefix}_{tid}.png"
+            error_file = self.snapshot_dir / f"{error_prefix}_{tid}.png"
             page.screenshot(path=str(error_file), full_page=False)
             logger.info(f"[{tid}] Diagnostic error snapshot saved to: {error_file}")
             return str(error_file)
@@ -103,7 +110,7 @@ class EasyApplyFiller:
         options: Optional[List[str]] = None,
     ) -> Optional[str]:
         """
-        Answer from the Q&A bank / profile backed by Claude Haiku Brain.
+        Answer from the Q&A bank / profile backed by Claude Haiku Brain scoped to user_id.
         Screening questions are dynamically resolved with Claude Haiku from profile.json.
         """
         ans = get_or_generate_answer(
@@ -114,6 +121,7 @@ class EasyApplyFiller:
             options=options,
             allow_ai_generation=True,
             verified_only=False,
+            user_id=self.user_id,
         )
         if ans is None:
             self.unanswered.append(label_text)
@@ -1052,6 +1060,11 @@ class EasyApplyFiller:
         if not auto_submit:
             try:
                 page.screenshot(path=str(snapshot_file), full_page=False)
+                try:
+                    import shutil
+                    shutil.copy2(snapshot_file, SNAPSHOT_DIR / snapshot_file.name)
+                except Exception:
+                    pass
             except Exception:
                 pass
             context.close()
@@ -1265,8 +1278,8 @@ class EasyApplyFiller:
         Inherits authenticated browser session from backend/data/browser_session/.
         """
         tid = thread_id or f"app_{int(time.time() * 1000)}"
-        snapshot_file = SNAPSHOT_DIR / f"review_{tid}.png"
-        confirmed_snapshot_file = SNAPSHOT_DIR / f"confirmed_{tid}.png"
+        snapshot_file = self.snapshot_dir / f"review_{tid}.png"
+        confirmed_snapshot_file = self.snapshot_dir / f"confirmed_{tid}.png"
 
         self.current_job_title = job_title
         self.current_company_name = company_name
@@ -1275,9 +1288,10 @@ class EasyApplyFiller:
 
         # Refuse to start without a real resume: never submit an application without one
         if not resume_path or not Path(resume_path).exists():
-            master_pdf = DATA_DIR / "uploaded_resume.pdf"
-            if master_pdf.exists():
-                resume_path = str(master_pdf)
+            from app.core.user_storage import get_user_resume
+            user_resume = get_user_resume(self.user_id)
+            if user_resume and user_resume.exists():
+                resume_path = str(user_resume)
             else:
                 return FormFillResult(
                     status="ERROR",
@@ -1290,7 +1304,7 @@ class EasyApplyFiller:
         all_filled: List[FieldMatchResult] = []
         steps_count = 0
 
-        session_dir = DATA_DIR / "browser_session"
+        session_dir = self.browser_session_dir
         if "indeed.com" in target_url_or_path.lower():
             session_dir = DATA_DIR / "indeed_session"
         session_dir.mkdir(parents=True, exist_ok=True)
@@ -1435,6 +1449,11 @@ class EasyApplyFiller:
                 # Assisted Mode: Capture review snapshot and pause at review gateway
                 try:
                     page.screenshot(path=str(snapshot_file), full_page=False)
+                    try:
+                        import shutil
+                        shutil.copy2(snapshot_file, SNAPSHOT_DIR / snapshot_file.name)
+                    except Exception:
+                        pass
                 except Exception:
                     pass
                 context.close()

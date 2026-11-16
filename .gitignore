@@ -10,6 +10,8 @@
 **/.env.*
 !.env.example
 !**/.env.example
+!.env.docker.example
+!**/.env.docker.example
 
 # Python Environments & Interpreters
 venv/
@@ -57,6 +59,8 @@ yarn-error.log*
 *.bak
 backend/data/*.db
 data/*.db
+backend/data/users/
+**/data/users/
 backend/data/account_settings.json
 backend/data/*cookies*.json
 backend/data/*.checkpoint

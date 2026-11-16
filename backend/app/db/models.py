@@ -5,7 +5,7 @@ Standards: Rule 1 (Cascading Integrity), Rule 2 (Type Constraints), Rule 3 (Conc
 """
 from datetime import datetime, timezone
 from typing import List, Optional, Any
-from sqlalchemy import Integer, String, Text, DateTime, ForeignKey, JSON, Boolean
+from sqlalchemy import Integer, String, Text, DateTime, ForeignKey, JSON, Boolean, UniqueConstraint
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 
 try:
@@ -109,10 +109,11 @@ class Application(Base):
 class ApplicationAnswer(Base):
     """Stores verified answers for repeated screening questions across application portals."""
     __tablename__ = "application_answers"
+    __table_args__ = (UniqueConstraint("user_id", "question", name="uq_user_question"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     user_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
-    question: Mapped[str] = mapped_column(String(512), unique=True, nullable=False, index=True)
+    question: Mapped[str] = mapped_column(String(512), nullable=False, index=True)
     answer: Mapped[str] = mapped_column(Text, nullable=False)
     category: Mapped[str] = mapped_column(String(100), default="General")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)

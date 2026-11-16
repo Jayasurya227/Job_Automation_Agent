@@ -23,24 +23,27 @@ logger = logging.getLogger("agent.booster")
 def boost_naukri_profile(
     resume_path: Optional[str] = None,
     screenshot_dir: Optional[Path] = None,
+    user_id: int = 1,
 ) -> Dict[str, Any]:
     """
-    Touches and refreshes candidate Naukri profile by re-uploading the verified resume PDF.
+    Touches and refreshes candidate Naukri profile by re-uploading the verified resume PDF scoped to user_id.
     Naukri Resdex updates candidate freshness to 'Today', placing them in the 1st page
     of recruiter active searches.
     """
-    session_dir = DATA_DIR / "browser_session"
-    if not session_dir.exists():
+    from app.core.user_storage import get_user_browser_session_dir, get_user_resume
+    session_dir = get_user_browser_session_dir(user_id)
+    marker_file = session_dir / "session_verified.json"
+    if not marker_file.exists():
         return {
             "status": "error",
-            "message": "Naukri browser session not found. Please connect Naukri first."
+            "message": f"Naukri browser session not found or not verified for User {user_id}. Please connect Naukri first."
         }
 
-    target_resume = Path(resume_path) if resume_path else (DATA_DIR / "uploaded_resume.pdf")
-    if not target_resume.exists():
+    target_resume = Path(resume_path) if resume_path else get_user_resume(user_id)
+    if not target_resume or not target_resume.exists():
         return {
             "status": "error",
-            "message": f"Resume PDF not found at {target_resume}. Please upload resume first."
+            "message": f"Resume PDF not found for User {user_id}. Please upload resume first."
         }
 
     sanitize_session_preferences(session_dir)
@@ -109,4 +112,19 @@ def boost_naukri_profile(
             "status": "error",
             "message": f"Profile booster execution error: {str(boost_err)}"
         }
+
+
+async def boost_naukri_profile_live(
+    resume_path: Optional[str] = None,
+    screenshot_dir: Optional[Path] = None,
+    user_id: int = 1,
+) -> Dict[str, Any]:
+    """Async wrapper for boost_naukri_profile scoped to user_id."""
+    import asyncio
+    return await asyncio.to_thread(
+        boost_naukri_profile,
+        resume_path=resume_path,
+        screenshot_dir=screenshot_dir,
+        user_id=user_id,
+    )
 

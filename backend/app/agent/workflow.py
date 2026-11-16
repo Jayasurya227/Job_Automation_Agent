@@ -168,22 +168,26 @@ def run_application_workflow(
     cold_email_body: Optional[str] = None,
     linkedin_connection_note: Optional[str] = None,
     is_manual_override: bool = False,
+    user_id: Optional[int] = 1,
 ) -> Dict[str, Any]:
     """
-    Executes a direct application pipeline for a given job.
+    Executes a direct application pipeline for a given job scoped to user_id.
     Uses master resume directly and triggers Playwright browser automation.
     If requires_human_approval is True, stages the form and pauses at Review Gateway.
     If False, submits the application and marks the job Applied only when submission is confirmed.
     """
     tid = thread_id or f"wf_{int(time.time() * 1000)}"
     ts = _get_timestamp()
+    uid = user_id or 1
 
-    # 1. Master resume resolution
-    master_pdf = BASE_DIR / "data" / "uploaded_resume.pdf"
-    pdf_path = tailored_resume_pdf_path or (str(master_pdf) if master_pdf.exists() else None)
+    # 1. Master resume resolution scoped strictly to user_id (Zero-Theft Guard)
+    from app.core.user_storage import get_user_resume
+    master_pdf = get_user_resume(uid)
+    pdf_path = tailored_resume_pdf_path or (str(master_pdf) if (master_pdf and master_pdf.exists()) else None)
 
     state: Dict[str, Any] = {
         "thread_id": tid,
+        "user_id": uid,
         "job_id": job_id,
         "job_title": job_title,
         "company_name": company_name,
@@ -232,7 +236,7 @@ def run_application_workflow(
             message=f"Evaluating ATS match fit for {job_title} at {company_name}..."
         )
         try:
-            match_res = analyze_and_score_job(job_description=job_description)
+            match_res = analyze_and_score_job(job_description=job_description, user_id=uid)
             score = match_res.match_score
             state["match_score"] = score
             state["matching_skills"] = match_res.matching_skills
@@ -280,7 +284,7 @@ def run_application_workflow(
         status="running",
         message="Staging verified candidate profile answers & master resume..."
     )
-    profile = load_profile()
+    profile = load_profile(user_id=uid)
     form_answers = {
         "full_name": profile.personal_info.name,
         "email": profile.personal_info.email,
@@ -306,6 +310,7 @@ def run_application_workflow(
             status="NO_URL",
             message="This job has no application URL. Nothing was staged or submitted.",
         )
+        return _result(state, tid)
     # Check strict daily application safety quota (Max 7/day)
     max_daily_apps = getattr(profile.preferences, "autopilot_max_daily_apps", 7) or 7
     with SessionLocal() as db:
@@ -320,7 +325,7 @@ def run_application_workflow(
     # 5. Execute Form Automation via Playwright
     try:
         from app.agent.applier import EasyApplyFiller
-        filler = EasyApplyFiller(headless=True)
+        filler = EasyApplyFiller(headless=True, user_id=uid)
         res = filler.fill_and_stage_application(
             target_url_or_path=job_url,
             resume_path=pdf_path,
@@ -413,9 +418,10 @@ def resume_application_workflow(
     approved: bool = True,
     reason: Optional[str] = None,
     checkpointer: Optional[Any] = None,
+    user_id: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
-    Resumes an interrupted review workflow with the candidate's decision.
+    Resumes an interrupted review workflow with the candidate's decision scoped to user_id.
     Each pending review can be decided only once: the session is removed from the registry here.
     If approved: runs the submission and marks the job Applied only if submission is confirmed.
 
@@ -435,6 +441,8 @@ def resume_application_workflow(
             "status": "SESSION_NOT_FOUND",
             "execution_logs": [f"[{ts}] {msg}"],
         }
+
+    uid = user_id or state.get("user_id", 1)
 
     resume_msg = "Candidate APPROVED submission" if approved else f"Candidate REJECTED ({reason or 'Manual skip'})"
     emit_event(f"workflow:{thread_id}", "workflow_step", {
@@ -491,7 +499,7 @@ def resume_application_workflow(
 
     try:
         from app.agent.applier import EasyApplyFiller
-        filler = EasyApplyFiller(headless=True)
+        filler = EasyApplyFiller(headless=True, user_id=uid)
         res = filler.fill_and_stage_application(
             target_url_or_path=job_url,
             resume_path=pdf_path,

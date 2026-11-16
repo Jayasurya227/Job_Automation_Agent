@@ -17,8 +17,10 @@ export default function Navbar({
   user,
   onLogout
 }) {
-  const userDisplayName = user?.fullName || (user?.firstName ? `${user.firstName} ${user.lastName || ''}`.trim() : 'User');
-  const userInitials = (user?.firstName ? user.firstName[0] : 'U') + (user?.lastName ? user.lastName[0] : '');
+  const userDisplayName = user?.full_name || user?.fullName || (user?.firstName ? `${user.firstName} ${user.lastName || ''}`.trim() : 'Rayavaram Jayasurya');
+  const userInitials = userDisplayName && userDisplayName !== 'User'
+    ? userDisplayName.split(' ').map(n => n[0]).filter(Boolean).slice(0, 2).join('').toUpperCase()
+    : 'RJ';
 
   return (
     <header className="navbar-header">
@@ -155,7 +157,7 @@ export default function Navbar({
                 {userInitials.toUpperCase()}
               </div>
               <span className="navbar-user-name" title={userDisplayName}>
-                {user.firstName || 'User'}
+                {userDisplayName}
               </span>
               {onLogout && (
                 <button

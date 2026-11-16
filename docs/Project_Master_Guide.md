@@ -1,35 +1,37 @@
-# Project Master Guide: Autonomous Job Automation Agent
+# Project Master Guide: Autonomous Job Automation Agent (Multi-User SaaS)
 
 ---
 
 ## 1. Problem Statement
 
 ### The Real-World Challenge:
-Job hunting in today's market is broken and mentally exhausting for job seekers:
-1. **Time Sink**: Searching across 5–10 different job portals (LinkedIn, Naukri, Indeed, Wellfound, etc.) takes 3–4 hours every day.
-2. **Resume Tailoring Fatigue**: ATS (Applicant Tracking Systems) filter out resumes that don't match specific keywords in the job description. Manually editing resumes for 20+ jobs a day is nearly impossible.
-3. **Application Tracking Chaos**: Candidates lose track of where they applied, which version of their resume was submitted, and when to follow up.
-4. **Low Response Rates**: Generic applications get ignored. Candidates need tailored resumes, custom cover letters, and direct outreach to recruiters to stand out.
+Job hunting in today's tech ecosystem is notoriously repetitive, mentally exhausting, and inefficient for candidates:
+1. **Time Sink**: Searching across portals like Naukri takes hours of manual filtering, clicking, and reading repetitive job listings every day.
+2. **Resume Tailoring Fatigue**: Applicant Tracking Systems (ATS) filter out candidates whose resumes lack exact keyword alignment. Manually tailoring resumes for 20+ jobs daily is unsustainable.
+3. **Application Tracking Chaos**: Candidates struggle to track which roles they applied to, which resume was submitted, and where follow-ups are needed.
+4. **Complex Screening Chatbots**: Portals like Naukri frequently intercept 1-click applies with multi-step screening drawers asking notice period, location, salary, and technical MCQs. Freshers often get stuck on required past salary fields.
+5. **Multi-User Collaboration & Privacy**: Multiple job seekers (colleagues, friends, or family) often need autonomous assistance, but legacy automation scripts rely on global hardcoded configurations, causing session hijacking, cookie collisions, and resume cross-contamination.
 
 ### The Solution:
-An **Autonomous Job Automation Agent** that acts as a 24/7 personal career assistant: discovering relevant jobs, tailoring resumes using AI, auto-filling applications safely, tracking statuses on a centralized dashboard, and drafting personalized recruiter cold emails.
+An **Enterprise-Grade Multi-User AI Job Application SaaS Platform (Dockerized)** that functions as an autonomous career command center: discovering high-match jobs on Naukri.com, scoring ATS alignment with Anthropic Claude, intelligently solving screening questionnaires (with dynamic fresher salary skip), managing persistent browser sessions in isolated user vaults, and running concurrent pipelines in Docker with complete tenant privacy.
 
 ---
 
-## 2. Comprehensive Project Research
+## 2. Comprehensive Project Research & Engine Selection
 
 ### Market & Competitive Landscape:
-- Existing tools like *Simplify.jobs*, *Teal*, and *LazyApply* prove huge market demand.
-- **Where existing tools fail**: Many get user accounts banned by spamming hundreds of applications rapidly or use generic, poorly tailored resumes that get rejected by ATS systems.
+- Tools like *Simplify.jobs*, *Teal*, and *LazyApply* demonstrate massive demand.
+- **Where existing tools fail**: They often get accounts banned by spamming high volumes without humanized delays, crash on complex dynamic screening drawers, or operate as single-user client extensions that leak candidate data.
 
 ### Technical Feasibility & Reality Check:
-1. **Anti-Bot Defenses**: Platforms like LinkedIn and Naukri use aggressive bot detection (Cloudflare, CAPTCHAs, OTPs).
-   - *Our Strategy*: Use **Persistent Browser Contexts** (saved login sessions) + **Human-like Delays** (3–7 seconds) + **Safe Daily Limits** (10–15 applications/day).
+1. **Anti-Bot Defenses & Portal Safety (Naukri.com)**:
+   - *Our Strategy*: Use **Per-User Persistent Browser Vaults** (`data/users/{uid}/browser_session/`) + **Humanized Jitter** (15ms–45ms typing delays, 1.5s–3.5s page pauses) + **Configurable Daily Quotas** (default 25 applications/day).
 2. **LLM Intelligence for ATS Optimization**:
-   - Modern LLMs (like Google Gemini) are exceptional at identifying semantic skill gaps between resumes and job descriptions.
-   - Using **LaTeX templates** ensures clean ATS parsing without styling glitches common in Word/DOCX.
-3. **Cost Efficiency**:
-   - The entire system can run on **100% free tiers**: Free Google Gemini API (1,500 free requests/day), free local SQLite, free Playwright automation, and free Gmail SMTP.
+   - Powered by **Anthropic Claude 3.5 Haiku (`claude-haiku-5-5`)** for sub-second, zero-hallucination semantic matching, fit percentage calculation, and automated screening question resolution.
+3. **Multi-Tenant SaaS Data Isolation**:
+   - Every candidate has their own cryptographically signed JWT token, row-level database isolation (`WHERE user_id = current_user.id`), and physical storage vault (`data/users/{user_id}/`) protecting resumes, cookies, and proof snapshots.
+4. **Production DevOps & Portability**:
+   - Microservices architecture containerized with **Docker** and **Docker Compose**, orchestrated via an **Nginx** reverse proxy with zero-buffering for Server-Sent Events (SSE) and 2GB shared memory for Playwright Chromium stability.
 
 ---
 
@@ -37,121 +39,100 @@ An **Autonomous Job Automation Agent** that acts as a 24/7 personal career assis
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
-│                   RESPONSIVE USER DASHBOARD (UI)                       │
-│       • View Match Scores        • One-Click Human Approval            │
-│       • Preview Tailored Resumes • Live Job Pipeline & Analytics       │
+│             REVERSE PROXY & GATEWAY (Nginx Alpine :5173 / :80)         │
+│     • Static React 19 SPA    • /api/ Reverse Proxy                     │
+│     • Zero-Buffering SSE     • /output/ User Vault Static Mount        │
 └──────────────────────────────────┬─────────────────────────────────────┘
-                                   │ HTTP / WebSockets
+                                   │ HTTP / SSE Stream
                                    ▼
 ┌────────────────────────────────────────────────────────────────────────┐
-│                     BACKEND SERVICE (FastAPI)                          │
-│       • Local SQLite Database    • User Profile Store                  │
-│       • Application State Queue  • Configuration & Security            │
+│             BACKEND APPLICATION SERVER (FastAPI :8000)                 │
+│     • JWT & bcrypt Auth Engine   • Row-Level Tenant Isolation          │
+│     • Dual-Engine DB (SQLite/PG) • Multi-Tenant SSE EventBus           │
 └──────────────────────────────────┬─────────────────────────────────────┘
                                    │
                                    ▼
 ┌────────────────────────────────────────────────────────────────────────┐
-│                   LANGGRAPH ORCHESTRATION ENGINE                       │
-│       • State Machine Workflow   • Human-in-the-Loop Checkpoints       │
+│        CONCURRENT TASK QUEUE (MultiTenantTaskQueue & asyncio.Lock)     │
+│     • Independent Per-User Worker Pools • Anti-Collision Locks         │
+│     • User-Scoped Timetable Cadence     • Daily Quota Counter          │
 └──────────────┬───────────────────┬───────────────────┬─────────────────┘
                │                   │                   │
                ▼                   ▼                   ▼
     ┌────────────────────┐ ┌───────────────┐ ┌───────────────────┐
-    │    THE AI BRAIN    │ │  AUTOMATION   │ │  COLD OUTREACH    │
-    │  (Google Gemini)   │ │ (Playwright)  │ │   (Gmail SMTP)    │
-    │  - Match Scoring   │ │ - Search Jobs │ │ - Find Recruiters │
-    │  - LaTeX Resume    │ │ - Easy Apply  │ │ - Send Emails     │
-    │  - Form Answers    │ │ - Fill Forms  │ │ - Track Replies   │
+    │    THE AI BRAIN    │ │ NAUKRI STEALTH│ │ RECRUITER OUTREACH│
+    │(Anthropic Claude)  │ │ (Playwright)  │ │   (Gmail SMTP)    │
+    │- ATS Match Scorer  │ │- Stealth Crawl│ │- Recruiter Search │
+    │- Skill Gap Analysis│ │- 1-Click Apply│ │- Cold Email Draft │
+    │- MCQ Chatbot Solver│ │- Fresher Skip │ │- Quota Enforcer   │
     └────────────────────┘ └───────────────┘ └───────────────────┘
+                                   │
+                                   ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│            TENANT PERSISTENCE & STORAGE VAULTS LAYER                   │
+│     • data/users/{uid}/profile.json        (Candidate facts)           │
+│     • data/users/{uid}/uploaded_resume.pdf (Master PDF resume)         │
+│     • data/users/{uid}/browser_session/    (Stealth Naukri cookies)    │
+│     • data/users/{uid}/output/snapshots/   (Visual proof captures)     │
+│     • jobs.db / Cloud PostgreSQL           (Row-level tenant records)  │
+└────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 4. Pre-Requirements
+## 4. Pre-Requirements & Technology Stack
 
-Before writing code, ensure you have:
-1. **Software & Environment**:
-   - Python 3.10 or higher installed.
-   - Node.js (for frontend UI if using React/Vite) or pure Python (if using Streamlit).
-   - Playwright with Chromium browser (`pip install playwright && playwright install chromium`).
-   - LangGraph framework (`pip install langgraph`).
-2. **Free API Keys & Accounts**:
-   - **Google Gemini API Key** (Free from [Google AI Studio](https://aistudio.google.com/)).
-   - Personal email with a **Google App Password** generated for Gmail SMTP.
-3. **Data Requirements**:
-   - A verified `profile.json` (Master Resume details, skills, experience, verified answers to common questions).
-   - A standard ATS-friendly `.tex` (LaTeX) resume template.
+### 1. Core Stack:
+- **Python 3.12+**: High-performance backend runtime powering FastAPI and Playwright.
+- **Node.js 20+ & Vite**: Next-generation frontend build tooling and React 19 environment.
+- **Docker & Docker Compose**: Unified microservices containerization.
+- **Nginx 1.27 Alpine**: High-efficiency production web server and reverse proxy.
+- **Playwright (Chromium)**: Modern stealth browser automation engine.
+- **Dual-Engine Database**: SQLAlchemy 2.0 ORM supporting embedded SQLite (WAL mode, foreign keys) or Cloud PostgreSQL.
 
----
+### 2. Security & Credentials:
+- **Anthropic Claude API Key**: Obtained from [Anthropic Console](https://console.anthropic.com/).
+- **JWT Secret Key**: Cryptographically random 256-bit string for signing auth tokens.
+- **Naukri.com Account**: Candidate credentials with mobile OTP authentication.
 
-## 5. Step-by-Step Implementation Process
-
-We divide the build into 6 distinct, manageable phases:
-
-* **Phase 1: Foundation & The AI Brain**:
-  Set up Gemini API, build `profile.json`, create JD parser, calculate match scores (0–100%), and generate customized LaTeX resumes.
-* **Phase 2: Database & Minimal Dashboard**:
-  Set up local SQLite database, build backend REST API, create the user interface to view jobs, scores, and download resumes.
-* **Phase 3: Browser Automation & Job Discovery**:
-  Use Playwright with saved browser sessions to search jobs on 1 portal (e.g., LinkedIn/Indeed), extract JDs, and pipe them into the dashboard.
-* **Phase 4: Assisted & Autonomous Job Applications (LangGraph)**:
-  Build the LangGraph StateGraph, automate internal "Easy Apply" forms with Playwright, and implement Human-in-the-Loop approval checkpoints before submission.
-* **Phase 5: Recruiter Discovery & Cold Email Outreach**:
-  Identify hiring managers, generate natural 75-word personalized emails, send them via free Gmail SMTP with resume attached.
-* **Phase 6: Continuous Improvement & Self-Learning**:
-  Track callback metrics, identify winning resume keywords, and categorize recruiter replies.
+### 3. Tenant Data Assets:
+- Master PDF Resume (`uploaded_resume.pdf`) uploaded via UI into `data/users/{uid}/`.
+- Candidate profile facts (`profile.json`) configuring target roles, skills, and ATS thresholds.
 
 ---
 
-## 6. Core Rule: Build One by One (Never Everything at Once)
+## 5. Implementation Roadmap & Architecture Milestones
 
-> **"Premature complexity is the enemy of working software."**
+The platform was built following rigorous phase-by-phase engineering:
 
-- **Do NOT**: Try to build a full multi-portal scraper, auto-applier, email sender, and AI engine on Day 1. That guarantees broken code, confusion, and burnout.
-- **DO**: Build **Phase 1 first**. Test it until you can paste a job description and get a perfect resume. Only once Phase 1 works 100%, proceed to Phase 2.
-- Each phase must produce a **usable, testable feature** that delivers value independently.
-
----
-
-## 7. Minimal Lines of Code with High Accuracy
-
-- **Avoid Code Bloat**: Write clean, modular, and concise code. 100 lines of solid, well-written code is better than 1,000 lines of messy, repetitive code.
-- **Use the Right Tools**:
-  - Don't write complex manual HTML parsers when Playwright locators do the job in 2 lines.
-  - Don't write complicated regex matching when Gemini can extract structured JSON cleanly.
-- **Fail Fast & Handle Errors**: Wrap network calls, browser clicks, and AI responses in clear `try/except` blocks with helpful error logs.
-
----
-
-## 8. Understand Every Line of Code Along with the Feature
-
-- **No Blind Copy-Pasting**: Never copy code without understanding what each function, loop, parameter, or prompt does.
-- **Ask "Why?"**:
-  - *Why are we using `context.new_page()` instead of `browser.new_page()`?* (Because context holds saved login cookies!).
-  - *Why are we using LaTeX instead of Word?* (Because ATS parsers read LaTeX PDFs without layout corruptions!).
-- Building with deep understanding prepares you to confidently explain every detail in tech interviews.
+* **Phase 1: Foundation & The AI Brain (Anthropic Claude 3.5)**:
+  Implemented Claude 3.5 Haiku client wrapper, semantic ATS scoring engine, weighted skill gap analysis, and screening questionnaire solver.
+* **Phase 2: Database & Cyber-Precision Web Dashboard (React 19)**:
+  Built SQLAlchemy models, ACID transaction management, FastAPI REST endpoints, and modern Kanban board UI with live status indicators and job inspection modals.
+* **Phase 3: Browser Automation & Naukri Job Discovery**:
+  Developed multi-page stealth crawler for Naukri.com with semantic query expansion, anti-bot flags, and deduplication triage.
+* **Phase 4: Autonomous 1-Click Application & Tri-Engine Screening Solver**:
+  Engineered Playwright 1-Click application executor, post-click redirection watchdog, and tri-engine chatbot solver with adaptive fresher salary skip.
+* **Phase 5: Recruiter Discovery, Outreach & Real-Time Telemetry**:
+  Built real-time SSE EventBus, automated Gmail SMTP cold outreach engine, and interactive funnel analytics.
+* **Phase 6: Multi-Tenant SaaS Transformation & Full Dockerization**:
+  Implemented cryptographic JWT authentication, per-user isolated storage vaults (`data/users/{uid}/`), `MultiTenantTaskQueue` concurrency with per-user locks, Zero-Theft Resume Guard, Anti-Hijacking OTP Guard, Master User Deletion Shield, Docker microservices packaging, and Nginx reverse proxy. Verified with comprehensive end-to-end multi-user test suites.
 
 ---
 
-## 9. Document What You Build and Why You Build It
+## 6. Core Engineering Rules & Tenets
 
-For every feature added, maintain brief documentation:
-1. **What does this feature do?** (e.g., *"This module scores a job description against the user's master resume"*).
-2. **Why was it built this way?** (e.g., *"We use Google Gemini Flash because it offers a free tier with high speed and large token limits"*).
-3. **Inputs and Outputs**: What goes into the function, and what comes out.
-4. **How to test it**: The exact command or button to verify it works.
-
----
-
-## 10. Always Start Simple and Move to Production Level
-
-Follow the **Crawl $\rightarrow$ Walk $\rightarrow$ Run** progression:
-
-| Level | Goal | Description |
-| :--- | :--- | :--- |
-| **Level 1: Crawl (Simple Script)** | Prove the Concept | Run a small Python script locally in terminal to verify the AI prompt or browser click works. |
-| **Level 2: Walk (Integrated UI)** | Make It Usable | Connect the script to the SQLite database and Dashboard UI for daily personal use. |
-| **Level 3: Run (Production Grade)** | Make It Resilient | Add retry mechanisms, rate limits, anti-detection delays, error logging, and background task scheduling. |
+1. **Strict Tenant Data Isolation**:
+   No candidate can ever access, view, or modify another candidate's jobs, applications, resumes, browser cookies, or telemetry logs.
+2. **Supreme Crawler Authority**:
+   Real physical DOM button interactions always take precedence over static job description boilerplate text.
+3. **Fail-Safe Redirection Watchdog**:
+   External redirects and company portal links are cleanly classified and opened in new tabs, preventing broken automated apply loops.
+4. **Adaptive Fresher Protection**:
+   Candidates with fresher experience levels (<1 year) are never stalled by required past salary fields; the agent autonomously skips or selects safe fallbacks.
+5. **Production Docker Portability**:
+   The entire full-stack platform must spin up reliably with a single terminal command (`docker compose up -d --build` or `./start.sh` / `start.bat`) on any operating system or cloud virtual machine.
 
 ---
-*Reference this guide at every stage of the build to ensure focus, quality, and smooth execution.*
+
+*Reference this guide for high-level system comprehension, architectural rationale, and production deployment standards.*

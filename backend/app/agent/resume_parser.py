@@ -175,12 +175,13 @@ def sanitize_profile_dict(data: Dict[str, Any]) -> Dict[str, Any]:
 def parse_resume_content(
     resume_text: Optional[str] = None,
     existing_profile_data: Optional[Dict[str, Any]] = None,
-    pdf_bytes: Optional[bytes] = None
+    pdf_bytes: Optional[bytes] = None,
+    user_id: Optional[int] = None
 ) -> Dict[str, Any]:
     """
     Parses resume content (via direct PDF bytes or extracted text) using Gemini AI
     into structured CandidateProfile schema, preserving existing search preferences
-    and application answers.
+    and application answers. Scoped to user_id for multi-tenant isolation.
     """
     system_instruction = (
         "You are an elite executive resume parser and talent analyst.\n"
@@ -301,10 +302,15 @@ def parse_resume_content(
     sanitized = sanitize_profile_dict(parsed)
 
     # Step 4: Base profile to preserve preferences
+    target_profile_file = PROFILE_FILE
+    if user_id is not None:
+        from app.core.user_storage import get_user_profile_path
+        target_profile_file = get_user_profile_path(user_id)
+
     base = existing_profile_data or {}
-    if not base and PROFILE_FILE.exists():
+    if not base and target_profile_file.exists():
         try:
-            with open(PROFILE_FILE, "r", encoding="utf-8") as f:
+            with open(target_profile_file, "r", encoding="utf-8") as f:
                 base = json.load(f)
         except Exception:
             base = {}
@@ -362,9 +368,13 @@ def parse_resume_content(
     validated = CandidateProfile(**merged)
     data = validated.model_dump()
 
-    # Save to profile.json atomically
-    with open(PROFILE_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
+    # Save to user's isolated profile.json atomically
+    if user_id is not None:
+        from app.core.user_storage import save_user_profile
+        save_user_profile(user_id, validated)
+    else:
+        with open(PROFILE_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
 
-    logger.info("Successfully parsed resume and synced with profile.json.")
+    logger.info(f"Successfully parsed resume and synced with profile.json (user_id={user_id}).")
     return data

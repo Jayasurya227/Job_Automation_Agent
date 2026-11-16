@@ -84,7 +84,7 @@ RULE_PATTERNS: List[RulePattern] = [
         "category": "Education"
     },
     {
-        "pattern": r"(total.*years of experience|overall.*experience|how many years.*experience overall)",
+        "pattern": r"(total.*experience|overall.*experience|how many years.*experience)",
         "handler": lambda p: str(p.application_answers.years_of_experience),
         "category": "Experience"
     },
@@ -131,12 +131,12 @@ RULE_PATTERNS: List[RulePattern] = [
 ]
 
 
-def seed_default_qa_bank() -> int:
+def seed_default_qa_bank(user_id: Optional[int] = None) -> int:
     """
-    Seeds default screening questions and answers from candidate profile into SQLite.
+    Seeds default screening questions and answers from candidate profile into SQLite scoped to user_id.
     Returns count of seeded questions.
     """
-    profile = load_profile()
+    profile = load_profile(user_id=user_id)
     count = 0
     with SessionLocal() as db:
         defaults = [
@@ -152,12 +152,12 @@ def seed_default_qa_bank() -> int:
         ]
         
         for q, a, cat in defaults:
-            existing = crud.get_qa_answer(db, q)
+            existing = crud.get_qa_answer(db, q, user_id=user_id)
             if not existing:
-                crud.save_qa_answer(db, q, a, cat)
+                crud.save_qa_answer(db, q, a, cat, user_id=user_id)
                 count += 1
                 
-    logger.info(f"Seeded {count} default screening questions into memory bank.")
+    logger.info(f"Seeded {count} default screening questions into memory bank for user {user_id or 1}.")
     return count
 
 
@@ -166,19 +166,19 @@ def _clean_question(q: str) -> str:
     return re.sub(r"[^\w\s]", "", q).strip().lower()
 
 
-def get_answer_from_memory(question: str) -> Optional[Dict[str, Any]]:
+def get_answer_from_memory(question: str, user_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
     """
-    Queries SQLite application_answers table for an exact or high-confidence match.
+    Queries SQLite application_answers table for an exact or high-confidence match scoped to user_id.
     """
     q_norm = _clean_question(question)
     with SessionLocal() as db:
         # 1. Exact match
-        exact = crud.get_qa_answer(db, question)
+        exact = crud.get_qa_answer(db, question, user_id=user_id)
         if exact:
             return {"answer": exact.answer, "source": "db_memory_exact", "confidence": 1.0, "category": exact.category}
             
         # 2. Normalized match across all stored questions
-        all_qa = crud.list_qa_answers(db)
+        all_qa = crud.list_qa_answers(db, user_id=user_id)
         for qa in all_qa:
             if _clean_question(qa.question) == q_norm:
                 return {"answer": qa.answer, "source": "db_memory_normalized", "confidence": 0.95, "category": qa.category}
@@ -186,11 +186,11 @@ def get_answer_from_memory(question: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-def get_answer_from_rules(question: str) -> Optional[Dict[str, Any]]:
+def get_answer_from_rules(question: str, user_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
     """
-    Checks common question regex patterns against candidate profile.
+    Checks common question regex patterns against candidate profile scoped to user_id.
     """
-    profile = load_profile()
+    profile = load_profile(user_id=user_id)
     q_lower = question.lower()
     
     # Check general rule patterns
@@ -230,15 +230,16 @@ def generate_ai_screening_answer(
     job_description: str = "",
     field_type: str = "text",
     options: Optional[List[str]] = None,
+    user_id: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     Generates a truthful, candidate-grounded answer using Claude Haiku when question is unseen.
-    Caches the answer in SQLite memory bank for future zero-latency reuse.
+    Caches the answer in SQLite memory bank for future zero-latency reuse scoped to user_id.
     """
-    profile = load_profile()
+    profile = load_profile(user_id=user_id)
 
     system_instruction = (
-        "You are representing candidate Rayavaram Jayasurya in a job application screening form.\n"
+        f"You are representing candidate {profile.personal_info.name} in a job application screening form.\n"
         "Your goal is to answer the employer's screening question truthfully, accurately, and strictly based on the candidate profile.\n\n"
         "CRITICAL CANDIDATE PROFILE FACTS (ZERO HALLUCINATION):\n"
         f"   - Full Name: {profile.personal_info.name}\n"
@@ -302,9 +303,9 @@ def generate_ai_screening_answer(
                     ans = opt
                     break
 
-        # Save to SQLite memory bank for future runs
+        # Save to SQLite memory bank for future runs scoped to user_id
         with SessionLocal() as db:
-            crud.save_qa_answer(db, question=question, answer=ans, category="AI_Generated")
+            crud.save_qa_answer(db, question=question, answer=ans, category="AI_Generated", user_id=user_id)
 
         return {
             "answer": ans,
@@ -332,26 +333,27 @@ def get_or_generate_answer(
     options: Optional[List[str]] = None,
     allow_ai_generation: bool = True,  # Claude Haiku Brain always enabled
     verified_only: bool = False,
+    user_id: Optional[int] = None,
 ) -> Optional[Dict[str, Any]]:
     """
-    Tiered resolver for screening questions:
+    Tiered resolver for screening questions scoped to user_id:
     Tier 1: SQLite DB Memory Bank (Cached answers)
     Tier 2: Profile Rule Patterns (Instant deterministic lookup)
     Tier 3: Claude AI Generation (Unseen open-ended & dynamic questions)
     """
     if verified_only:
-        mem = get_answer_from_memory(question)
+        mem = get_answer_from_memory(question, user_id=user_id)
         if mem and mem.get("category") != "AI_Generated":
             return mem
-        rule = get_answer_from_rules(question)
+        rule = get_answer_from_rules(question, user_id=user_id)
         if rule:
             with SessionLocal() as db:
-                crud.save_qa_answer(db, question=question, answer=str(rule["answer"]), category=rule["category"])
+                crud.save_qa_answer(db, question=question, answer=str(rule["answer"]), category=rule["category"], user_id=user_id)
             return rule
         return None
 
     # 1. Tier 1: SQLite Memory Bank
-    mem = get_answer_from_memory(question)
+    mem = get_answer_from_memory(question, user_id=user_id)
     if mem:
         # If numeric field, ensure stored answer isn't an invalid string like "Yes"
         if field_type == "number" and not re.search(r"\d", str(mem.get("answer", ""))):
@@ -360,7 +362,7 @@ def get_or_generate_answer(
             return mem
 
     # 2. Tier 2: Profile Rules
-    rule = get_answer_from_rules(question)
+    rule = get_answer_from_rules(question, user_id=user_id)
     if rule:
         rule_ans = str(rule["answer"])
         if field_type == "number":
@@ -399,11 +401,12 @@ def get_or_generate_answer(
                     job_description=job_description,
                     field_type=field_type,
                     options=options,
+                    user_id=user_id,
                 )
 
         # Cache rule answer to SQLite DB for instant exact matches later
         with SessionLocal() as db:
-            crud.save_qa_answer(db, question=question, answer=rule["answer"], category=rule["category"])
+            crud.save_qa_answer(db, question=question, answer=rule["answer"], category=rule["category"], user_id=user_id)
         return rule
 
     # 3. Tier 3: Claude AI Generator
@@ -415,6 +418,7 @@ def get_or_generate_answer(
             job_description=job_description,
             field_type=field_type,
             options=options,
+            user_id=user_id,
         )
 
     return {

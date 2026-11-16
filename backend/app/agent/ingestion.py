@@ -304,9 +304,13 @@ async def run_autonomous_ingestion(
     return report
 
 
-async def process_1click_applications(max_daily_limit: int = 7, min_score: int = AUTO_APPLY_MATCH_THRESHOLD):
+async def process_1click_applications(
+    user_id: int = 1,
+    max_daily_limit: int = 7,
+    min_score: int = AUTO_APPLY_MATCH_THRESHOLD,
+):
     """
-    Autonomous 1-Click Apply Worker:
+    Autonomous 1-Click Apply Worker scoped to user_id:
     Inspects qualifying jobs in the Review queue ('Ready' status).
     - Checks whether each job is a native 1-Click Apply on Naukri OR an External Company Site link.
     - If Native 1-Click Apply: Agent automatically clicks Apply in the backend (zero human clicks needed)!
@@ -317,7 +321,7 @@ async def process_1click_applications(max_daily_limit: int = 7, min_score: int =
     from app.agent.scorer import load_profile
 
     try:
-        profile = load_profile()
+        profile = load_profile(user_id=user_id)
         max_daily = getattr(profile.preferences, "autopilot_max_daily_apps", max_daily_limit) or max_daily_limit
         threshold_score = getattr(profile.preferences, "autopilot_auto_apply_score", min_score) or min_score
     except Exception:
@@ -325,18 +329,19 @@ async def process_1click_applications(max_daily_limit: int = 7, min_score: int =
         threshold_score = min_score
 
     applied_in_this_run = 0
-    filler = EasyApplyFiller(headless=True)
+    filler = EasyApplyFiller(headless=True, user_id=user_id)
 
     with SessionLocal() as db:
-        applied_today = crud.get_applied_today_count(db)
-        logger.info(f"📊 Auto-Apply quota check: {applied_today}/{max_daily} applications submitted today.")
+        applied_today = crud.get_applied_today_count(db, user_id=user_id)
+        logger.info(f"📊 Auto-Apply quota check for user {user_id}: {applied_today}/{max_daily} applications submitted today.")
 
         if applied_today >= max_daily:
-            logger.info(f"Daily safety quota reached ({applied_today}/{max_daily}). Leftover jobs stay in Review for tomorrow.")
-            emit_event("autopilot", "quota_reached", {"applied_today": applied_today, "max_daily": max_daily})
-            return {"applied_count": 0, "daily_total": applied_today, "status": "QUOTA_FULL"}
+            logger.info(f"Daily safety quota reached for user {user_id} ({applied_today}/{max_daily}). Leftover jobs stay in Review for tomorrow.")
+            emit_event(f"autopilot:{user_id}", "quota_reached", {"applied_today": applied_today, "max_daily": max_daily, "user_id": user_id})
+            emit_event("autopilot", "quota_reached", {"applied_today": applied_today, "max_daily": max_daily, "user_id": user_id})
+            return {"applied_count": 0, "daily_total": applied_today, "status": "QUOTA_FULL", "user_id": user_id}
 
-        ready_jobs = crud.list_jobs(db=db, limit=50, status="Ready")
+        ready_jobs = crud.list_jobs(db=db, limit=50, status="Ready", user_id=user_id)
         candidates = [
             j for j in ready_jobs
             if (j.evaluation and j.evaluation.match_score >= threshold_score)
@@ -345,26 +350,33 @@ async def process_1click_applications(max_daily_limit: int = 7, min_score: int =
         ]
 
         if not candidates:
-            logger.info("No unapplied 1-Click candidate jobs in Review queue.")
-            return {"applied_count": 0, "daily_total": applied_today, "status": "EMPTY"}
+            logger.info(f"No unapplied 1-Click candidate jobs in Review queue for user {user_id}.")
+            return {"applied_count": 0, "daily_total": applied_today, "status": "EMPTY", "user_id": user_id}
 
-        logger.info(f"⚡ Autonomous Agent inspecting {len(candidates)} jobs in Review queue for 1-Click Apply...")
+        logger.info(f"⚡ Autonomous Agent inspecting {len(candidates)} jobs in Review queue for user {user_id} 1-Click Apply...")
+        emit_event(f"discovery:{user_id}", "discovery_progress", {
+            "stage": "applying",
+            "message": f"Autonomous Agent inspecting {len(candidates)} jobs for 1-Click Apply (Daily Limit: {applied_today}/{max_daily})...",
+            "user_id": user_id,
+        })
         emit_event("discovery", "discovery_progress", {
             "stage": "applying",
-            "message": f"Autonomous Agent inspecting {len(candidates)} jobs for 1-Click Apply (Daily Limit: {applied_today}/{max_daily})..."
+            "message": f"Autonomous Agent inspecting {len(candidates)} jobs for User {user_id} 1-Click Apply (Daily Limit: {applied_today}/{max_daily})...",
+            "user_id": user_id,
         })
 
         for job in candidates:
             if applied_today >= max_daily:
-                logger.info(f"Daily safety quota reached ({applied_today}/{max_daily}). Leftover jobs stay in Review for tomorrow.")
-                emit_event("autopilot", "quota_reached", {"applied_today": applied_today, "max_daily": max_daily})
+                logger.info(f"Daily safety quota reached for user {user_id} ({applied_today}/{max_daily}). Leftover jobs stay in Review for tomorrow.")
+                emit_event(f"autopilot:{user_id}", "quota_reached", {"applied_today": applied_today, "max_daily": max_daily, "user_id": user_id})
+                emit_event("autopilot", "quota_reached", {"applied_today": applied_today, "max_daily": max_daily, "user_id": user_id})
                 break
 
             score = job.evaluation.match_score if job.evaluation else 0
             pdf_path = job.applications[0].tailored_resume_pdf_path if job.applications else None
 
             portal_display = "Indeed" if ("indeed.com" in (job.job_url or "").lower() or (job.portal_name or "").lower() == "indeed") else "Naukri"
-            logger.info(f"🔍 Backend Agent inspecting '{job.job_title}' at '{job.company_name}' for 1-Click vs External Site on {portal_display}...")
+            logger.info(f"🔍 Backend Agent inspecting '{job.job_title}' at '{job.company_name}' for User {user_id} on {portal_display}...")
             try:
                 res = await asyncio.to_thread(
                     filler.fill_and_stage_application,
@@ -372,7 +384,7 @@ async def process_1click_applications(max_daily_limit: int = 7, min_score: int =
                     resume_path=pdf_path,
                     job_title=job.job_title,
                     company_name=job.company_name,
-                    thread_id=f"auto_{job.id}_{int(asyncio.get_event_loop().time())}",
+                    thread_id=f"auto_{user_id}_{job.id}_{int(asyncio.get_event_loop().time())}",
                     auto_submit=True
                 )
 
@@ -381,18 +393,29 @@ async def process_1click_applications(max_daily_limit: int = 7, min_score: int =
                         db=db,
                         job_id=job.id,
                         status="Applied",
-                        notes=f"Auto-applied autonomously via 1-Click Apply on {portal_display} (Score: {score}%)."
+                        notes=f"Auto-applied autonomously via 1-Click Apply on {portal_display} (Score: {score}%).",
+                        user_id=user_id,
                     )
                     applied_today += 1
                     applied_in_this_run += 1
-                    logger.info(f"✅ Successfully auto-applied to '{job.job_title}' at '{job.company_name}' on {portal_display} ({applied_today}/{max_daily} today).")
+                    logger.info(f"✅ Successfully auto-applied to '{job.job_title}' at '{job.company_name}' for User {user_id} ({applied_today}/{max_daily} today).")
+                    emit_event(f"discovery:{user_id}", "discovery_progress", {
+                        "stage": "applied",
+                        "job_id": job.id,
+                        "title": job.job_title,
+                        "company": job.company_name,
+                        "portal": portal_display,
+                        "message": f"✅ Auto-applied to '{job.job_title}' at {job.company_name} via {portal_display} ({applied_today}/{max_daily})!",
+                        "user_id": user_id,
+                    })
                     emit_event("discovery", "discovery_progress", {
                         "stage": "applied",
                         "job_id": job.id,
                         "title": job.job_title,
                         "company": job.company_name,
                         "portal": portal_display,
-                        "message": f"✅ Auto-applied to '{job.job_title}' at {job.company_name} via {portal_display} ({applied_today}/{max_daily})!"
+                        "message": f"✅ Auto-applied to '{job.job_title}' at {job.company_name} for User {user_id} ({applied_today}/{max_daily})!",
+                        "user_id": user_id,
                     })
 
                 elif res.status == "ALREADY_APPLIED":
@@ -400,9 +423,10 @@ async def process_1click_applications(max_daily_limit: int = 7, min_score: int =
                         db=db,
                         job_id=job.id,
                         status="Applied",
-                        notes=f"Already applied on {portal_display}."
+                        notes=f"Already applied on {portal_display}.",
+                        user_id=user_id,
                     )
-                    logger.info(f"ℹ️ Already applied to '{job.job_title}' at '{job.company_name}' on {portal_display}. Marked Applied.")
+                    logger.info(f"ℹ️ Already applied to '{job.job_title}' at '{job.company_name}' for User {user_id} on {portal_display}. Marked Applied.")
 
                 elif res.status == "EXTERNAL_SITE":
                     ext_status = "Ready" if score >= AUTO_APPLY_MATCH_THRESHOLD else "Archived"
@@ -415,34 +439,38 @@ async def process_1click_applications(max_daily_limit: int = 7, min_score: int =
                         db=db,
                         job_id=job.id,
                         status=ext_status,
-                        notes=ext_note
+                        notes=ext_note,
+                        user_id=user_id,
                     )
                     logger.info(f"🔗 '{job.job_title}' at '{job.company_name}' redirects to external company portal. Triaged to {ext_status}.")
-                    emit_event("discovery", "discovery_progress", {
+                    emit_event(f"discovery:{user_id}", "discovery_progress", {
                         "stage": "external_skip",
                         "job_id": job.id,
                         "title": job.job_title,
                         "company": job.company_name,
                         "portal": portal_display,
-                        "message": f"🔗 '{job.job_title}' at {job.company_name} is an external portal -> Triaged to {ext_status}."
+                        "message": f"🔗 '{job.job_title}' at {job.company_name} is an external portal -> Triaged to {ext_status}.",
+                        "user_id": user_id,
                     })
 
                 elif res.status == "LOGIN_REQUIRED":
-                    logger.warning(f"{portal_display} login session is disconnected. Halting auto-apply.")
-                    emit_event("discovery", "discovery_progress", {
+                    logger.warning(f"{portal_display} login session for User {user_id} is disconnected. Halting auto-apply.")
+                    emit_event(f"discovery:{user_id}", "discovery_progress", {
                         "stage": "auth_warning",
-                        "message": f"{portal_display} login session disconnected. Please click 'Launch Safe Login Session' in Settings."
+                        "message": f"{portal_display} login session disconnected. Please connect Naukri in Settings.",
+                        "user_id": user_id,
                     })
                     break
 
             except Exception as apply_err:
-                logger.warning(f"Error during auto-apply for job {job.id}: {apply_err}")
+                logger.warning(f"Error during auto-apply for job {job.id} (user {user_id}): {apply_err}")
 
     return {
         "applied_count": applied_in_this_run,
         "daily_total": applied_today,
         "max_daily": max_daily,
-        "status": "COMPLETED"
+        "status": "COMPLETED",
+        "user_id": user_id,
     }
 
 
@@ -477,7 +505,7 @@ async def discover_and_ingest(
         )
 
     async with _discovery_lock:
-        prefs = load_candidate_preferences()
+        prefs = load_candidate_preferences(user_id=user_id)
         saved_exp = prefs.get("experience_level", "0-1")
         eff_exp = experience_level if experience_level is not None else saved_exp
         exp_labels = {"0-1": "Fresher (0-1 Yrs)", "1-2": "Early Career (1-2 Yrs)", "2-4": "Associate (2-4 Yrs)", "all": "Any Exp"}
@@ -509,17 +537,21 @@ async def discover_and_ingest(
         portal_names = ", ".join([p.title() for p in effective_portals])
         freshness_label = f"Past {freshness_days * 24} Hours" if freshness_days == 1 else (f"Past {freshness_days} Days" if freshness_days > 0 else "All Time")
 
-        emit_event("discovery", "discovery_progress", {
+        progress_payload = {
             "stage": "scraping",
             "search_term": term_str,
             "location": loc_str,
             "portals": effective_portals,
             "freshness": freshness_label,
             "experience": exp_label,
-            "message": f"Searching {portal_names} in parallel for '{term_str}' in '{loc_str}' ({freshness_label}, {exp_label})..."
-        })
+            "message": f"Searching {portal_names} in parallel for '{term_str}' in '{loc_str}' ({freshness_label}, {exp_label})...",
+            "user_id": user_id,
+        }
+        emit_event("discovery", "discovery_progress", progress_payload)
+        if user_id is not None:
+            emit_event(f"discovery:{user_id}", "discovery_progress", progress_payload)
 
-        logger.info(f"Triggering parallel end-to-end discovery across {portal_names} for '{term_str}' in '{loc_str}' ({freshness_label}, exp={exp_label})...")
+        logger.info(f"Triggering parallel end-to-end discovery across {portal_names} for '{term_str}' in '{loc_str}' ({freshness_label}, exp={exp_label}, user_id={user_id})...")
         raw_discovered = await discover_jobs(
             search_term=search_term,
             search_terms=search_terms,
@@ -530,13 +562,18 @@ async def discover_and_ingest(
             freshness_days=freshness_days,
             experience_level=eff_exp,
             deduplicate=True,
+            user_id=user_id,
         )
 
-        emit_event("discovery", "discovery_progress", {
+        disc_payload = {
             "stage": "discovered",
             "count": len(raw_discovered),
-            "message": f"Found {len(raw_discovered)} live postings. Evaluating fit and deduplicating with SQLite..."
-        })
+            "message": f"Found {len(raw_discovered)} live postings. Evaluating fit and deduplicating with SQLite...",
+            "user_id": user_id,
+        }
+        emit_event("discovery", "discovery_progress", disc_payload)
+        if user_id is not None:
+            emit_event(f"discovery:{user_id}", "discovery_progress", disc_payload)
 
         report = await run_autonomous_ingestion(
             discovered_jobs=raw_discovered,

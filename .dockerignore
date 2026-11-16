@@ -1,0 +1,35 @@
+# ==============================================================================
+# Docker Ignore Rules - Autonomous Job Automation Agent (Root)
+# ==============================================================================
+
+# Version Control & Metadata
+.git/
+.gitignore
+.gitattributes
+.gemini/
+
+# Virtual Environments & Packages
+venv/
+.venv/
+backend/venv/
+backend/.venv/
+node_modules/
+frontend/node_modules/
+frontend/dist/
+
+# Python Bytecode
+__pycache__/
+*.py[cod]
+
+# Secrets & Local Env
+.env
+.env.*
+!.env.example
+!.env.docker.example
+
+# Ephemeral & Test artifacts
+*.log
+backend/test_*.py
+backend/data/users/*/browser_session/
+backend/output/snapshots/
+backend/output/resumes/

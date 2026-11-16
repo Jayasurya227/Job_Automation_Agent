@@ -1,81 +1,69 @@
-# <span style="color: #2563EB;">Project Prerequisites & Requirements</span>
+# <span style="color: #2563EB;">Project Prerequisites & System Requirements</span>
 
-> A simple, clear guide explaining every technology, tool, and framework used in this project, and the exact reason why we use it.
-
----
-
-## <span style="color: #2563EB;">1. Tech Stack</span>
-
-### **Python (v3.10+)**
-- **What it is**: The main programming language for the backend.
-- **Why we use it**: It is the industry standard for AI and automation. It runs our agent workflows, handles data, and connects the frontend to the AI.
-
-### **SQLite**
-- **What it is**: A lightweight, built-in database that runs inside a single file.
-- **Why we use it**: It permanently remembers all applied jobs, interview calls, and tailored resumes so the agent never applies to the same job twice. It requires zero setup and costs $0.
-
-### **LaTeX (pdflatex)**
-- **What it is**: A professional document typesetting system.
-- **Why we use it**: Standard Word documents often break ATS (Applicant Tracking System) scanners. LaTeX generates pixel-perfect, 100% ATS-friendly PDF resumes.
-
-### **HTML, CSS, JavaScript (React / Vite)**
-- **What it is**: The frontend technologies for the user interface.
-- **Why we use it**: Creates a modern, responsive dashboard that works smoothly on both mobile phones and laptops to review matches and track applications.
+> A clear, comprehensive guide detailing every technology, tool, and runtime environment required to run, build, and deploy the Autonomous Job Automation Agent (Multi-User SaaS).
 
 ---
 
-## <span style="color: #2563EB;">2. Tools & Utilities</span>
+## <span style="color: #2563EB;">1. Core Tech Stack</span>
 
-### **Google AI Studio**
-- **What it is**: Google's developer console for Gemini AI.
-- **Why we use it**: Provides a 100% free API key giving us up to 1,500 free requests per day to power our AI Brain without paying any money.
+### **Python (v3.12+)**
+- **What it is**: High-performance backend programming language.
+- **Why we use it**: Powers FastAPI, Playwright browser automation, Anthropic Claude AI integration, and the concurrent task queue.
 
-### **VS Code / Antigravity IDE**
-- **What it is**: The code editor and development environment.
-- **Why we use it**: For writing, debugging, and managing our Python, Frontend, and LaTeX files.
+### **Node.js (v20+) & Vite**
+- **What it is**: Modern JavaScript runtime and build engine.
+- **Why we use it**: Compiles and serves the React 19 frontend application with hot module replacement (HMR) and optimized static production builds.
 
-### **Git & GitHub**
-- **What it is**: Version control and code repository.
-- **Why we use it**: Tracks all code changes, protects against mistakes, and hosts the project to showcase to recruiters and managers.
+### **Docker & Docker Compose**
+- **What it is**: Industry-standard containerization platform.
+- **Why we use it**: Packages the entire full-stack platform into reproducible, isolated microservices (`backend` and `frontend`). Enables one-command launch across any OS or cloud VM.
 
-### **Gmail App Password (SMTP)**
-- **What it is**: A secure 16-character password created inside your Google account.
-- **Why we use it**: Allows Python to send personalized cold emails directly from your Gmail account to recruiters with your resume attached.
+### **Nginx 1.27 (Alpine)**
+- **What it is**: High-performance web server and reverse proxy.
+- **Why we use it**: Serves production React assets, proxies API calls to FastAPI, mounts tenant output vaults securely, and streams real-time Server-Sent Events (SSE) with zero-buffering.
 
----
-
-## <span style="color: #2563EB;">3. Agent Frameworks & Automation</span>
-
-### **Playwright (Chromium)**
-- **What it is**: A modern, high-speed browser automation framework.
-- **Why we use it**: It acts as the "hands and eyes" of our agent. It automatically opens job portals (like LinkedIn and Indeed), searches for roles, extracts job descriptions, and auto-fills application forms.
-
-### **Google Generative AI SDK (`google-generativeai`)**
-- **What it is**: The official Python client library for Gemini.
-- **Why we use it**: It acts as the "brain" of our agent. It reads the job description, compares it against your master profile, calculates match scores, and tailors resume bullet points.
-
-### **Pydantic**
-- **What it is**: A data validation and settings management library.
-- **Why we use it**: Ensures that data coming from the AI or user forms is 100% accurate, strictly formatted, and free of missing fields.
-
-### **LangGraph**
-- **What it is**: An advanced state-machine framework for orchestrating multi-step AI agents.
-- **Why we use it**: It acts as the workflow manager connecting all steps. Crucially, it provides native "Human-in-the-Loop" interrupts to pause the agent and wait for user approval before submitting applications.
-
-### **Python-Dotenv (`python-dotenv`)**
-- **What it is**: A security utility that loads environment variables from a `.env` file.
-- **Why we use it**: Keeps your private Gemini API key and email passwords safe so they are never exposed in your public code.
+### **Dual-Engine Database (SQLite WAL / PostgreSQL)**
+- **What it is**: SQLAlchemy 2.0 ORM with dialect-agnostic models.
+- **Why we use it**: Defaults to embedded multi-tenant SQLite with Write-Ahead Logging (WAL) and foreign keys enabled for zero-config local operation. Supports Cloud PostgreSQL (`DATABASE_URL=postgresql://...`) with 0 code changes.
 
 ---
 
-## <span style="color: #2563EB;">4. Candidate Master Assets</span>
+## <span style="color: #2563EB;">2. Security & Automation Libraries</span>
 
-### **Master Profile (`profile.json`)**
-- **What it is**: A single JSON file storing your verified personal facts (skills, projects, education, phone, links).
-- **Why we use it**: It is the single source of truth. The agent reads this file to answer job application questions accurately without making up fake information.
+### **Playwright (Chromium Engine)**
+- **What it is**: Modern, high-speed browser automation framework.
+- **Why we use it**: Drives stealth multi-page job searches on Naukri.com, solves dynamic screening drawers, simulates human typing jitter, and captures proof snapshots.
 
-### **Master Resume Template (`resume.tex`)**
-- **What it is**: A clean, ATS-compliant LaTeX resume template.
-- **Why we use it**: Serves as the base resume that the AI updates with matching keywords for every specific job.
+### **Cryptographic Security (`bcrypt` & `PyJWT`)**
+- **What it is**: Industry-standard password hashing and JWT token management.
+- **Why we use it**: Protects candidate credentials with secure salt rounds and signs Bearer JWT tokens to enforce strict tenant isolation across all API endpoints.
+
+### **Pydantic v2**
+- **What it is**: Data validation and settings management library.
+- **Why we use it**: Enforces strict typing and structure for all incoming API payloads, AI responses, and database schemas.
+
+---
+
+## <span style="color: #2563EB;">3. External APIs & Portal Credentials</span>
+
+### **Anthropic Claude API Key**
+- **What it is**: Developer API key from [Anthropic Console](https://console.anthropic.com/).
+- **Why we use it**: Powers our AI Brain using **Claude 3.5 Haiku (`claude-haiku-5-5`)** for sub-second, zero-hallucination ATS match scoring and technical screening MCQ resolution.
+
+### **Naukri.com Account (Candidate Account)**
+- **What it is**: Candidate profile on Naukri.com.
+- **Why we use it**: Target job portal for automated search and 1-click applications. Authenticated once via headless mobile OTP and preserved inside the candidate's isolated session vault.
+
+### **Gmail App Password (Optional Outreach Engine)**
+- **What it is**: 16-character application-specific password generated inside your Google Account.
+- **Why we use it**: Enables Python to send personalized recruiter outreach emails via standard Gmail SMTP.
+
+---
+
+## <span style="color: #2563EB;">4. Candidate Master Assets (Per-User Storage Vault)</span>
+
+Inside `backend/data/users/{user_id}/`:
+- **Master PDF Resume (`uploaded_resume.pdf`)**: The baseline resume uploaded by the candidate and streamed directly to job portal containers.
+- **Master Profile (`profile.json`)**: Candidate personal facts, verified work history, target roles, and ATS match thresholds.
 
 ---

@@ -8,19 +8,31 @@ import json
 import re
 from pathlib import Path
 
+from typing import Optional
 from app.config import DEFAULT_MODEL, claude_client, BASE_DIR
 from app.agent.llm import response_text, parse_json_object
 from app.utils.rate_limiter import execute_with_rate_limit
 from app.schemas.profile import CandidateProfile
 from app.schemas.match import JobMatchResult
 
-def load_profile(profile_path: str = "profile.json") -> CandidateProfile:
-    """Dynamically loads and validates candidate profile from disk."""
+def load_profile(profile_path: str = "profile.json", user_id: Optional[int] = None) -> CandidateProfile:
+    """Dynamically loads and validates candidate profile from user's private vault or fallback path."""
+    if user_id is not None:
+        try:
+            from app.core.user_storage import load_user_profile
+            return load_user_profile(user_id=user_id)
+        except Exception:
+            pass
+
     target = Path(profile_path)
     if not target.exists() and (BASE_DIR / profile_path).exists():
         target = BASE_DIR / profile_path
     if not target.exists():
-        raise FileNotFoundError(f"Profile not found at: {profile_path}")
+        try:
+            from app.core.user_storage import load_user_profile
+            return load_user_profile(user_id=1)
+        except Exception:
+            raise FileNotFoundError(f"Profile not found at: {profile_path}")
     with open(target, "r", encoding="utf-8") as f:
         data = json.load(f)
     return CandidateProfile(**data)
@@ -158,16 +170,17 @@ def analyze_and_score_job(
     company: str = "",
     portal: str = "",
     job_url: str = "",
+    user_id: Optional[int] = None,
 ) -> JobMatchResult:
     """
-    Evaluates a raw Job Description against the Candidate Profile using Claude AI Brain.
+    Evaluates a raw Job Description against the Candidate Profile using Claude AI Brain scoped to user_id.
     Enforces pure JSON output matching JobMatchResult Pydantic schema.
     Also intelligently classifies whether applying is native 1-Click vs External company portal.
     Grounds experience strictly in the user's Settings tab (Single Source of Truth),
     never guessing or penalizing based on college graduation year or resume dates.
     """
     # 1. Load dynamic candidate profile & experience level from Settings (Single Source of Truth)
-    profile = load_profile(profile_path)
+    profile = load_profile(profile_path, user_id=user_id)
     exp_level = getattr(profile.preferences, "experience_level", "0-1") or "0-1"
     exp_labels = {
         "0-1": "0-1 Years (Fresher / Entry Level)",
@@ -271,3 +284,7 @@ def analyze_and_score_job(
     result_data = parse_json_object(response_text(response))
     sanitized_data = sanitize_skills_report(result_data)
     return JobMatchResult(**sanitized_data)
+
+
+# Alias for cross-module compatibility
+score_job = analyze_and_score_job

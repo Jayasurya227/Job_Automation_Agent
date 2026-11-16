@@ -215,12 +215,35 @@ async def run_interactive_session(target_url: str, portal_name: str, session_dir
 
 
 def main():
-    if len(sys.argv) > 1 and sys.argv[1].lower() in ["naukri", "--naukri", "-n"]:
-        print("Starting direct Naukri login session...")
-        asyncio.run(run_interactive_session("https://www.naukri.com/nlogin/login", "Naukri"))
+    user_id = 1
+    if "--user-id" in sys.argv:
+        try:
+            uid_idx = sys.argv.index("--user-id")
+            user_id = int(sys.argv[uid_idx + 1])
+        except (ValueError, IndexError):
+            user_id = 1
+
+    session_dir = None
+    if "--session-dir" in sys.argv:
+        try:
+            s_idx = sys.argv.index("--session-dir")
+            session_dir = Path(sys.argv[s_idx + 1])
+        except IndexError:
+            pass
+
+    if not session_dir:
+        try:
+            from app.core.user_storage import get_user_browser_session_dir
+            session_dir = get_user_browser_session_dir(user_id)
+        except Exception:
+            session_dir = DEFAULT_SESSION_DIR
+
+    if any(arg.lower() in ["naukri", "--naukri", "-n"] for arg in sys.argv[1:]):
+        print(f"Starting direct Naukri login session for User {user_id}...")
+        asyncio.run(run_interactive_session("https://www.naukri.com/nlogin/login", "Naukri", session_dir=session_dir))
         return
 
-    if len(sys.argv) > 1 and sys.argv[1].lower() in ["indeed", "--indeed", "-i"]:
+    if any(arg.lower() in ["indeed", "--indeed", "-i"] for arg in sys.argv[1:]):
         print("Starting direct Indeed login session...")
         from app.config import DATA_DIR
         indeed_dir = DATA_DIR / "indeed_session"

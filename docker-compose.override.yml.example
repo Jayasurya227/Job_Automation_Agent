@@ -1,0 +1,16 @@
+# ==============================================================================
+# Docker Compose Local Development Override (Example)
+# Rename to docker-compose.override.yml for live code mounting & hot reload
+# ==============================================================================
+
+services:
+  backend:
+    volumes:
+      # Mount source code for live hot-reloading in development
+      - ./backend:/app
+      - /app/venv
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+  frontend:
+    ports:
+      - "5173:80"
