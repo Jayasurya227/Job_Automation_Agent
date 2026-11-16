@@ -2218,6 +2218,21 @@ body {
   z-index: 2;
 }
 
+/* Split-Screen Container */
+.auth-split-container {
+  position: relative;
+  z-index: 10;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Hidden by default on Mobile / Tablet (< 1024px) - Zero Mobile Impact */
+.auth-showcase-panel {
+  display: none;
+}
+
 /* Auth Card - Liquid 3D Crystal Glass */
 .auth-card {
   position: relative;
@@ -2644,7 +2659,11 @@ body {
 
 @media (max-width: 640px) {
   .auth-page-wrapper {
-    padding: 28px 12px 16px !important;
+    height: auto !important;
+    min-height: 100vh !important;
+    min-height: 100dvh !important;
+    overflow-y: auto !important;
+    padding: 24px 14px !important;
     align-items: center;
     justify-content: center;
   }
@@ -2673,16 +2692,26 @@ body {
   }
 
   .auth-card {
-    max-width: 355px !important;
-    width: calc(100% - 16px) !important;
-    padding: 22px 18px 18px;
-    border-radius: 20px;
-    background: rgba(255, 255, 255, 0.88) !important;
-    backdrop-filter: blur(20px) !important;
-    -webkit-backdrop-filter: blur(20px) !important;
+    height: auto !important;
+    max-height: none !important;
+    max-width: 380px !important;
+    width: 100% !important;
+    margin: auto !important;
+    padding: 24px 20px 20px !important;
+    border-radius: 22px !important;
+    justify-content: flex-start !important;
+    gap: 10px !important;
+    background: rgba(255, 255, 255, 0.90) !important;
+    backdrop-filter: blur(24px) !important;
+    -webkit-backdrop-filter: blur(24px) !important;
     box-shadow: 
-      0 18px 45px -8px rgba(15, 23, 42, 0.50),
-      0 0 28px rgba(6, 182, 212, 0.22) !important;
+      0 18px 45px -8px rgba(15, 23, 42, 0.40),
+      0 0 24px rgba(6, 182, 212, 0.18) !important;
+  }
+
+  .auth-card .auth-form {
+    flex: unset !important;
+    justify-content: flex-start !important;
   }
 
   .auth-header {
@@ -2814,6 +2843,294 @@ body {
   .auth-row-names {
     grid-template-columns: 1fr;
     gap: 8px;
+  }
+}
+
+/* ==========================================================================
+   Laptop / Desktop View (min-width: 1024px): 50-50 Split Showcase
+   Leaves mobile view (< 1024px) 100% untouched.
+   ========================================================================== */
+@media (min-width: 1024px) {
+  .auth-page-wrapper {
+    min-height: 100vh;
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 8px 36px 12px;
+    box-sizing: border-box;
+    overflow-y: auto;
+  }
+
+  .auth-split-container {
+    width: 100%;
+    max-width: 1200px;
+    display: grid;
+    grid-template-columns: 460px 1fr;
+    gap: 44px;
+    align-items: center;
+    margin: auto;
+  }
+
+  .auth-card {
+    width: 100%;
+    max-width: 460px;
+    height: auto;
+    max-height: calc(100vh - 24px);
+    margin: 0;
+    padding: 24px 32px 18px;
+    border-radius: 26px;
+  }
+
+  .auth-showcase-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    animation: authCardFadeIn 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .showcase-top-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    align-self: flex-start;
+    padding: 4px 12px;
+    border-radius: 9999px;
+    background: rgba(99, 102, 241, 0.12);
+    border: 1px solid rgba(99, 102, 241, 0.28);
+    color: #4338ca;
+    font-size: 0.74rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    backdrop-filter: blur(12px);
+  }
+
+  .showcase-hero-title {
+    font-family: -apple-system, BlinkMacSystemFont, "Plus Jakarta Sans", "Inter", "Segoe UI", Roboto, system-ui, sans-serif;
+    font-size: 1.72rem;
+    font-weight: 600;
+    line-height: 1.20;
+    color: #0f172a;
+    letter-spacing: -0.015em;
+    margin: 0;
+  }
+
+  .showcase-gradient-text {
+    font-weight: 700;
+    background: linear-gradient(135deg, #2563eb 0%, #0891b2 55%, #059669 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .showcase-hero-desc {
+    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, system-ui, sans-serif;
+    font-size: 0.84rem;
+    font-weight: 450;
+    line-height: 1.4;
+    color: #475569;
+    max-width: 500px;
+    margin: 0;
+  }
+
+  /* 3D Glassmorphic Visual Showcase */
+  .showcase-hero-visual-container {
+    position: relative;
+    width: 100%;
+    border-radius: 20px;
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.75) 0%, rgba(255, 255, 255, 0.40) 100%);
+    backdrop-filter: blur(24px) saturate(180%);
+    -webkit-backdrop-filter: blur(24px) saturate(180%);
+    border: 1.5px solid rgba(255, 255, 255, 0.95);
+    box-shadow: 0 16px 36px rgba(15, 23, 42, 0.08), inset 0 1px 2px rgba(255, 255, 255, 0.95);
+    padding: 8px;
+    margin-top: 0;
+  }
+
+  .showcase-image-wrapper {
+    position: relative;
+    width: 100%;
+    border-radius: 16px;
+    overflow: hidden;
+    box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
+  }
+
+  .showcase-hero-image {
+    width: 100%;
+    height: 350px;
+    object-fit: cover;
+    display: block;
+    border-radius: 16px;
+    transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .showcase-hero-visual-container:hover .showcase-hero-image {
+    transform: scale(1.02);
+  }
+
+  .showcase-image-overlay-glow {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    border-radius: 18px;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.08) 0%, rgba(15, 23, 42, 0.04) 100%);
+    box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.6);
+  }
+
+  /* Floating HUD Badges - Compact Corner Pills */
+  .floating-badge {
+    position: absolute;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 5px 10px;
+    border-radius: 9px;
+    background: rgba(255, 255, 255, 0.72);
+    backdrop-filter: blur(14px) saturate(180%);
+    -webkit-backdrop-filter: blur(14px) saturate(180%);
+    border: 1px solid rgba(255, 255, 255, 0.90);
+    box-shadow: 0 4px 14px rgba(15, 23, 42, 0.08), inset 0 1px 1px rgba(255, 255, 255, 0.95);
+    z-index: 5;
+    transition: all 0.25s ease;
+    user-select: none;
+  }
+
+  .floating-badge:hover {
+    transform: translateY(-2px);
+    background: rgba(255, 255, 255, 0.92);
+    box-shadow: 0 6px 18px rgba(15, 23, 42, 0.12);
+  }
+
+  .badge-auto-applied {
+    top: 10px;
+    left: 10px;
+    animation: badgeFloatA 4.5s ease-in-out infinite alternate;
+  }
+
+  .badge-ats-match {
+    top: 10px;
+    right: 10px;
+    animation: badgeFloatB 4.2s ease-in-out infinite alternate;
+  }
+
+  .badge-portals {
+    bottom: 10px;
+    left: 10px;
+    animation: badgeFloatC 5s ease-in-out infinite alternate;
+  }
+
+  @keyframes badgeFloatA {
+    0% { transform: translateY(0px); }
+    100% { transform: translateY(-4px); }
+  }
+
+  @keyframes badgeFloatB {
+    0% { transform: translateY(-3px); }
+    100% { transform: translateY(2px); }
+  }
+
+  @keyframes badgeFloatC {
+    0% { transform: translateY(0px); }
+    100% { transform: translateY(-3px); }
+  }
+
+  .floating-badge-icon {
+    width: 22px;
+    height: 22px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .badge-icon-emerald {
+    background: rgba(16, 185, 129, 0.16);
+    color: #059669;
+    border: 1px solid rgba(16, 185, 129, 0.25);
+  }
+
+  .badge-icon-indigo {
+    background: rgba(99, 102, 241, 0.16);
+    color: #4f46e5;
+    border: 1px solid rgba(99, 102, 241, 0.25);
+  }
+
+  .badge-icon-cyan {
+    background: rgba(6, 182, 212, 0.16);
+    color: #0891b2;
+    border: 1px solid rgba(6, 182, 212, 0.25);
+  }
+
+  .floating-badge-text {
+    display: flex;
+    align-items: center;
+  }
+
+  .badge-title {
+    font-size: 0.72rem;
+    font-weight: 650;
+    color: #0f172a;
+    letter-spacing: -0.01em;
+    line-height: 1;
+    white-space: nowrap;
+  }
+
+  .showcase-live-strip {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 7px 14px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.65);
+    border: 1px solid rgba(255, 255, 255, 0.85);
+    backdrop-filter: blur(14px);
+    font-size: 0.73rem;
+    color: #334155;
+  }
+
+  .showcase-pulse-indicator {
+    position: relative;
+    width: 9px;
+    height: 9px;
+    flex-shrink: 0;
+  }
+
+  .pulse-ping {
+    position: absolute;
+    inset: -2px;
+    border-radius: 50%;
+    background-color: #10b981;
+    opacity: 0.75;
+    animation: ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite;
+  }
+
+  .pulse-dot {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background-color: #059669;
+  }
+
+  @keyframes ping {
+    75%, 100% {
+      transform: scale(2);
+      opacity: 0;
+    }
+  }
+
+  .showcase-status-label {
+    font-weight: 700;
+    color: #065f46;
+  }
+
+  .showcase-tags-divider {
+    color: #94a3b8;
+  }
+
+  .showcase-tags-list {
+    color: #64748b;
+    font-weight: 500;
+    font-size: 0.74rem;
   }
 }
 

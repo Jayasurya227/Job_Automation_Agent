@@ -19,6 +19,9 @@ from app.schemas.auth import (
     TokenResponse,
     ForgotPasswordRequest,
     VerifyOTPResetPasswordRequest,
+    VerifyOTPOnlyRequest,
+    VerifyOTPOnlyResponse,
+    SetNewPasswordRequest,
     ForgotPasswordResponse,
     ResetPasswordResponse,
 )
@@ -26,6 +29,7 @@ from app.core.security import (
     hash_password,
     verify_password,
     create_access_token,
+    decode_access_token,
     get_current_user,
     generate_cryptographic_otp,
 )
@@ -158,6 +162,70 @@ def get_me(
     return UserResponse.model_validate(current_user)
 
 
+def dispatch_otp_email(to_email: str, recipient_name: str, otp_code: str) -> bool:
+    """Attempts to dispatch OTP via configured SMTP; logs on success or gracefully logs fallback."""
+    import os
+    import smtplib
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text import MIMEText
+
+    # Read credentials from environment or account_settings.json
+    smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com")
+    smtp_port = int(os.getenv("SMTP_PORT", "587"))
+    smtp_user = os.getenv("SMTP_USER", "")
+    smtp_password = os.getenv("SMTP_PASSWORD", "") or os.getenv("SMTP_PASS", "")
+
+    if not smtp_user or not smtp_password:
+        try:
+            from app.agent.mailer import load_account_settings
+            settings = load_account_settings()
+            if settings.smtp.sender_email and settings.smtp.app_password:
+                smtp_host = settings.smtp.host
+                smtp_port = settings.smtp.port
+                smtp_user = settings.smtp.sender_email
+                smtp_password = settings.smtp.app_password
+        except Exception:
+            pass
+
+    if not smtp_user or not smtp_password:
+        logger.info(f"🔑 [PASSWORD RECOVERY] Generated 6-digit OTP for {to_email}: {otp_code} (SMTP not configured, logging code for preview)")
+        return False
+
+    try:
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = f"Your Password Reset Code: {otp_code} - Autonomous Job Agent"
+        msg["From"] = f"Autonomous Job Agent <{smtp_user}>"
+        msg["To"] = to_email
+
+        html_content = f"""
+        <html>
+        <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #0f172a; padding: 30px; margin: 0;">
+          <div style="max-width: 480px; margin: 0 auto; background-color: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 28px; color: #f8fafc;">
+            <h2 style="margin-top: 0; color: #818cf8; font-size: 20px;">Autonomous Job Agent</h2>
+            <h3 style="margin-bottom: 8px; color: #f8fafc; font-size: 17px;">Password Reset Verification</h3>
+            <p style="color: #94a3b8; font-size: 14px; line-height: 1.5;">Hello <strong>{recipient_name}</strong>,</p>
+            <p style="color: #94a3b8; font-size: 14px; line-height: 1.5;">You requested to reset your password. Use the single-use 6-digit verification code below to proceed:</p>
+            <div style="text-align: center; margin: 24px 0;">
+              <span style="font-size: 32px; font-weight: 700; letter-spacing: 8px; color: #38bdf8; background: #0f172a; padding: 12px 24px; border-radius: 8px; display: inline-block; border: 1px solid #38bdf8;">{otp_code}</span>
+            </div>
+            <p style="color: #64748b; font-size: 12px; line-height: 1.5;">This code is valid for 10 minutes and will expire immediately after use or if a new code is requested. If you did not request this code, no action is needed.</p>
+          </div>
+        </body>
+        </html>
+        """
+        msg.attach(MIMEText(html_content, "html"))
+
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as server:
+            server.starttls()
+            server.login(smtp_user, smtp_password)
+            server.send_message(msg)
+        logger.info(f"📧 [EMAIL OTP] Successfully dispatched OTP email to {to_email}")
+        return True
+    except Exception as e:
+        logger.warning(f"📧 [EMAIL OTP] SMTP dispatch warning for {to_email}: {e}")
+        return False
+
+
 @router.post(
     "/forgot-password/request-otp",
     response_model=ForgotPasswordResponse,
@@ -170,7 +238,7 @@ def request_password_reset_otp(
 ):
     """
     Dispatches a cryptographically secure 6-digit OTP valid for 10 minutes.
-    Invalidates any previous unused OTPs for the user.
+    Automatically invalidates any previous unused OTPs for this user so only the latest code works.
     """
     clean_email = payload.email.strip().lower()
 
@@ -182,7 +250,7 @@ def request_password_reset_otp(
             detail="No registered active account found with this email address. Please sign up."
         )
 
-    # Invalidate previous unused OTPs for this user
+    # Invalidate all previous unused OTPs for this user (Old OTP auto-invalidation rule)
     db.query(PasswordResetOTP).filter(
         PasswordResetOTP.user_id == user.id,
         PasswordResetOTP.is_used.is_(False)
@@ -202,13 +270,129 @@ def request_password_reset_otp(
     db.add(otp_record)
     db.commit()
 
-    logger.info(f"🔑 [PASSWORD RECOVERY] Generated 6-digit OTP for {clean_email}: {otp_code} (Valid for {OTP_EXPIRE_MINUTES} mins)")
+    # Dispatch via email
+    dispatch_otp_email(to_email=clean_email, recipient_name=user.full_name, otp_code=otp_code)
 
     return ForgotPasswordResponse(
-        message=f"Verification OTP has been generated. It is valid for {OTP_EXPIRE_MINUTES} minutes.",
+        message=f"Verification OTP has been sent to {clean_email}. It is valid for {OTP_EXPIRE_MINUTES} minutes.",
         email=clean_email,
-        expires_in_minutes=OTP_EXPIRE_MINUTES,
-        dev_otp_preview=otp_code
+        expires_in_minutes=OTP_EXPIRE_MINUTES
+    )
+
+
+@router.post(
+    "/forgot-password/verify-otp",
+    response_model=VerifyOTPOnlyResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Step 2: Verify 6-digit OTP and return a reset token"
+)
+def verify_otp_only(
+    payload: VerifyOTPOnlyRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Step 2 in real-world password recovery:
+    Validates whether the entered 6-digit OTP is valid, unused, and unexpired.
+    Returns a signed temporary reset token allowing the user to proceed to Step 3 (Set New Password).
+    """
+    clean_email = payload.email.strip().lower()
+    clean_otp = payload.otp.strip()
+
+    now = datetime.now(timezone.utc)
+
+    # 1. Locate matching unused OTP record for this email
+    otp_record = db.query(PasswordResetOTP).filter(
+        PasswordResetOTP.email == clean_email,
+        PasswordResetOTP.otp_code == clean_otp,
+        PasswordResetOTP.is_used.is_(False)
+    ).order_by(PasswordResetOTP.created_at.desc()).first()
+
+    if not otp_record:
+        logger.warning(f"OTP verification failed: Invalid or already-used OTP '{clean_otp}' for '{clean_email}'")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired OTP code. Please enter the latest code or request a fresh one."
+        )
+
+    # 2. Check expiration
+    otp_expiry = otp_record.expires_at
+    if otp_expiry.tzinfo is None:
+        otp_expiry = otp_expiry.replace(tzinfo=timezone.utc)
+
+    if now > otp_expiry:
+        logger.warning(f"OTP verification failed: Expired OTP '{clean_otp}' for '{clean_email}'")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This OTP verification code has expired (10-minute limit). Please request a fresh code."
+        )
+
+    # 3. Mark OTP as consumed immediately (Strict Anti-Replay Protection)
+    otp_record.is_used = True
+    db.commit()
+
+    # 4. Generate short-lived reset token (valid for 15 minutes)
+    reset_token = create_access_token(
+        user_id=otp_record.user_id,
+        email=clean_email,
+        expires_delta=timedelta(minutes=15)
+    )
+
+    logger.info(f"✅ OTP verified successfully for '{clean_email}'. Proceeding to Step 3.")
+    return VerifyOTPOnlyResponse(
+        valid=True,
+        message="OTP verified successfully. Please enter your new password.",
+        reset_token=reset_token
+    )
+
+
+@router.post(
+    "/forgot-password/set-new-password",
+    response_model=ResetPasswordResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Step 3: Set new password using verified reset token"
+)
+def set_new_password(
+    payload: SetNewPasswordRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Step 3 in real-world password recovery:
+    Validates reset token and updates the user's password with a fresh bcrypt hash.
+    Invalidates any remaining unused OTPs for this user to permanently prevent replay attacks.
+    """
+    clean_email = payload.email.strip().lower()
+
+    # 1. Decode and validate reset token
+    token_payload = decode_access_token(payload.reset_token)
+    if not token_payload or token_payload.get("email") != clean_email:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired password reset session. Please verify your OTP again."
+        )
+
+    user_id = int(token_payload["sub"])
+    user = db.query(User).filter(User.id == user_id, User.is_active.is_(True)).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Associated user account not found."
+        )
+
+    # 2. Update user's password with fresh bcrypt hash
+    new_hash = hash_password(payload.new_password)
+    user.password_hash = new_hash
+
+    # 3. Mark all unused OTPs as consumed (Permanent replay prevention)
+    db.query(PasswordResetOTP).filter(
+        PasswordResetOTP.user_id == user.id,
+        PasswordResetOTP.is_used.is_(False)
+    ).update({"is_used": True})
+    db.commit()
+
+    logger.info(f"Password reset completed successfully for User #{user.id} ({user.email}).")
+    return ResetPasswordResponse(
+        success=True,
+        message="Your password has been successfully reset. You can now sign in with your new password."
     )
 
 
@@ -216,7 +400,7 @@ def request_password_reset_otp(
     "/forgot-password/verify-reset",
     response_model=ResetPasswordResponse,
     status_code=status.HTTP_200_OK,
-    summary="Verify 6-digit OTP and reset password"
+    summary="Verify 6-digit OTP and reset password (Legacy / Backward Compatibility)"
 )
 def verify_otp_and_reset_password(
     payload: VerifyOTPResetPasswordRequest,
@@ -242,10 +426,10 @@ def verify_otp_and_reset_password(
         logger.warning(f"Password reset failed: Invalid OTP '{clean_otp}' for '{clean_email}'")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid OTP verification code. Please check your code or request a fresh one."
+            detail="Invalid or expired OTP verification code. Please check your code or request a fresh one."
         )
 
-    # 2. Check expiration (handling timezone awareness cleanly)
+    # 2. Check expiration
     otp_expiry = otp_record.expires_at
     if otp_expiry.tzinfo is None:
         otp_expiry = otp_expiry.replace(tzinfo=timezone.utc)

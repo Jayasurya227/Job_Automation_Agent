@@ -95,6 +95,47 @@ class ForgotPasswordResponse(BaseModel):
     expires_in_minutes: int
 
 
+class VerifyOTPOnlyRequest(BaseModel):
+    email: str = Field(..., min_length=5, max_length=255, description="Registered account email")
+    otp: str = Field(..., min_length=6, max_length=6, description="6-digit verification OTP code")
+
+    @field_validator("email")
+    @classmethod
+    def validate_email_format(cls, v: str) -> str:
+        clean = v.strip().lower()
+        if not EMAIL_REGEX.match(clean):
+            raise ValueError("Invalid email address format.")
+        return clean
+
+    @field_validator("otp")
+    @classmethod
+    def validate_otp_format(cls, v: str) -> str:
+        clean = v.strip()
+        if not (len(clean) == 6 and clean.isdigit()):
+            raise ValueError("OTP must be exactly 6 digits.")
+        return clean
+
+
+class VerifyOTPOnlyResponse(BaseModel):
+    valid: bool
+    message: str
+    reset_token: str
+
+
+class SetNewPasswordRequest(BaseModel):
+    email: str = Field(..., min_length=5, max_length=255, description="Registered account email")
+    reset_token: str = Field(..., min_length=10, description="Verified reset token from Step 2")
+    new_password: str = Field(..., min_length=6, max_length=128, description="New security password")
+
+    @field_validator("email")
+    @classmethod
+    def validate_email_format(cls, v: str) -> str:
+        clean = v.strip().lower()
+        if not EMAIL_REGEX.match(clean):
+            raise ValueError("Invalid email address format.")
+        return clean
+
+
 class ResetPasswordResponse(BaseModel):
     success: bool
     message: str

@@ -112,6 +112,18 @@ export const api = {
       body: JSON.stringify({ email }),
     }),
 
+  verifyOtpOnly: (email, otp) =>
+    request('/api/auth/forgot-password/verify-otp', {
+      method: 'POST',
+      body: JSON.stringify({ email, otp }),
+    }),
+
+  setNewPassword: (email, resetToken, newPassword) =>
+    request('/api/auth/forgot-password/set-new-password', {
+      method: 'POST',
+      body: JSON.stringify({ email, reset_token: resetToken, new_password: newPassword }),
+    }),
+
   verifyOtpAndResetPassword: (email, otp, newPassword) =>
     request('/api/auth/forgot-password/verify-reset', {
       method: 'POST',

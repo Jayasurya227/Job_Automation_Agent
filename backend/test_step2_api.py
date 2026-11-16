@@ -1,4 +1,4 @@
-"""
+from """
 Module: test_step2_api.py
 Purpose: Rigorous automated verification for Step 2 FastAPI Mobile Connection Endpoints.
 """
