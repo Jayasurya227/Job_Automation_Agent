@@ -7,11 +7,32 @@ const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
 // Must match API_TOKEN in backend/.env. Leave unset when the backend has no API_TOKEN.
 const API_TOKEN = import.meta.env.VITE_API_TOKEN || '';
 
-// EventSource, <a href> and <iframe> cannot send headers, so the token goes in the query string.
-function withToken(url) {
-  if (!API_TOKEN) return url;
-  const sep = url.includes('?') ? '&' : '?';
-  return `${url}${sep}api_token=${encodeURIComponent(API_TOKEN)}`;
+// EventSource, <a href> and <iframe> cannot send headers, so the auth token goes in the query string.
+export function withToken(url) {
+  let result = url;
+  const jwt = getAuthToken();
+  if (jwt) {
+    const sep = result.includes('?') ? '&' : '?';
+    result = `${result}${sep}token=${encodeURIComponent(jwt)}`;
+  }
+  if (API_TOKEN) {
+    const sep = result.includes('?') ? '&' : '?';
+    result = `${result}${sep}api_token=${encodeURIComponent(API_TOKEN)}`;
+  }
+  return result;
+}
+
+export function getCurrentUserId() {
+  try {
+    const token = getAuthToken();
+    if (!token) return null;
+    const parts = token.split('.');
+    if (parts.length !== 3) return null;
+    const payload = JSON.parse(atob(parts[1]));
+    return payload.sub ? Number(payload.sub) : null;
+  } catch {
+    return null;
+  }
 }
 
 export function getAuthToken() {
@@ -66,6 +87,18 @@ async function request(endpoint, options = {}) {
   });
 
   if (!response.ok) {
+    if (response.status === 401) {
+      // Don't broadcast auth:expired for login/register/password-reset failures (invalid credentials)
+      const isAuthEndpoint = endpoint.startsWith('/api/auth/login') ||
+                             endpoint.startsWith('/api/auth/register') ||
+                             endpoint.startsWith('/api/auth/forgot-password');
+      if (!isAuthEndpoint) {
+        clearAuthToken();
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('auth:expired'));
+        }
+      }
+    }
     let errorDetail = `Request failed with status ${response.status}`;
     try {
       const errorJson = await response.json();
@@ -185,6 +218,12 @@ export const api = {
       body: formData,
     });
     if (!response.ok) {
+      if (response.status === 401) {
+        clearAuthToken();
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('auth:expired'));
+        }
+      }
       let errDetail = 'Failed to upload resume';
       try {
         const errJson = await response.json();
@@ -196,6 +235,7 @@ export const api = {
   },
 
   downloadMasterResumePdfUrl: () => withToken(`${API_BASE}/api/profile/download-resume-pdf`),
+  downloadUploadedResumeUrl: () => withToken(`${API_BASE}/api/profile/download-uploaded-resume`),
   downloadTailoredResumePdfUrl: (jobId) => withToken(`${API_BASE}/api/jobs/${jobId}/tailored-resume-pdf`),
 
   // Autonomous Discovery (Phase 3)

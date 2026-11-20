@@ -11,7 +11,7 @@ from typing import Optional, Dict, Any
 
 import bcrypt
 import jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status, Request, Query
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 
@@ -184,6 +184,58 @@ def get_optional_current_user(
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
-    # Backwards-compatibility fallback to User #1 when called without any token
-    master_user = db.query(User).filter(User.id == 1, User.is_active.is_(True)).first()
-    return master_user
+    # If no token is provided, return None (Zero silent fallback to User #1)
+    return None
+
+
+def get_current_user_from_token_or_header(
+    request: Request,
+    token: Optional[str] = Query(None),
+    db: Session = Depends(get_db)
+) -> User:
+    """
+    Resolves the authenticated User from either:
+    1. Authorization: Bearer <jwt> header
+    2. ?token=<jwt> query parameter (for direct browser file downloads <a href>, <iframe>)
+    Raises HTTP 401 Unauthorized if token is missing, invalid, or expired.
+    """
+    jwt_str = token if isinstance(token, str) and token.strip() else None
+    if not jwt_str and request:
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            jwt_str = auth_header.split(" ", 1)[1].strip()
+
+    if not jwt_str:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication token required. Provide Authorization header or ?token= query parameter.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    payload = decode_access_token(jwt_str)
+    if not payload or not payload.get("sub"):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials or token expired. Please log in again.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    try:
+        user_id = int(payload["sub"])
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token subject.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    user = db.query(User).filter(User.id == user_id, User.is_active.is_(True)).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User account not found or has been deactivated.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    return user
+

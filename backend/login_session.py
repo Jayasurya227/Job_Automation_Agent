@@ -161,15 +161,27 @@ async def run_interactive_session(target_url: str, portal_name: str, session_dir
         marker_file = storage_path / "session_verified.json"
 
         # Retry loop: a failed check no longer ends the session. You can finish logging in and press ENTER again.
+        is_interactive = bool(sys.stdin and hasattr(sys.stdin, "isatty") and sys.stdin.isatty())
+        poll_attempts = 0
+
         while True:
             bring_chrome_to_foreground()
-            answer = await loop.run_in_executor(
-                None, input,
-                "\n👉 Press [ENTER] once you have logged in in Chrome (do not close window). Type q + ENTER to quit without saving: "
-            )
-            if answer.strip().lower() == "q":
-                print("Quit without saving. No session was stored.")
-                return
+            if is_interactive:
+                answer = await loop.run_in_executor(
+                    None, input,
+                    "\n👉 Press [ENTER] once you have logged in in Chrome (do not close window). Type q + ENTER to quit without saving: "
+                )
+                if answer.strip().lower() == "q":
+                    print("Quit without saving. No session was stored.")
+                    return
+            else:
+                # Non-interactive / headless environment fallback: auto-poll for authenticated cookies every 3s
+                poll_attempts += 1
+                if poll_attempts > 60:
+                    print("Non-interactive session timed out waiting for login (180s elapsed).")
+                    return
+                print(f"Non-interactive mode: polling candidate session cookies (check {poll_attempts}/60)...")
+                await asyncio.sleep(3)
 
             print("\n🔍 Verifying candidate account authentication...")
             try:
@@ -244,9 +256,9 @@ def main():
         return
 
     if any(arg.lower() in ["indeed", "--indeed", "-i"] for arg in sys.argv[1:]):
-        print("Starting direct Indeed login session...")
-        from app.config import DATA_DIR
-        indeed_dir = DATA_DIR / "indeed_session"
+        print(f"Starting direct Indeed login session for User {user_id}...")
+        from app.core.user_storage import get_user_indeed_session_dir
+        indeed_dir = session_dir or get_user_indeed_session_dir(user_id)
         asyncio.run(run_interactive_session("https://secure.indeed.com/auth", "Indeed", session_dir=indeed_dir))
         return
 

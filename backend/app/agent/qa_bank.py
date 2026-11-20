@@ -125,7 +125,7 @@ RULE_PATTERNS: List[RulePattern] = [
     },
     {
         "pattern": r"(gender|sex)",
-        "handler": lambda p: "Male",
+        "handler": lambda p: getattr(p.personal_info, "gender", None) or p.application_answers.custom_qa.get("gender") or "Prefer not to say",
         "category": "Demographics"
     },
 ]
@@ -157,7 +157,7 @@ def seed_default_qa_bank(user_id: Optional[int] = None) -> int:
                 crud.save_qa_answer(db, q, a, cat, user_id=user_id)
                 count += 1
                 
-    logger.info(f"Seeded {count} default screening questions into memory bank for user {user_id or 1}.")
+    logger.info(f"Seeded {count} default screening questions into memory bank for user {user_id}.")
     return count
 
 
@@ -238,20 +238,33 @@ def generate_ai_screening_answer(
     """
     profile = load_profile(user_id=user_id)
 
+    target_roles_str = ", ".join(profile.preferences.target_roles[:3]) if profile.preferences.target_roles else "Software Engineering"
+    all_skills = (
+        profile.technical_skills.programming_languages +
+        profile.technical_skills.frameworks_and_libraries +
+        profile.technical_skills.databases +
+        profile.technical_skills.tools_and_platforms
+    )
+    skills_str = ", ".join(all_skills) if all_skills else "Software Engineering, Problem Solving"
+    edu_str = f"{profile.education[0].degree} in {profile.education[0].field_of_study}" if profile.education and profile.education[0].degree else "Bachelor's Degree"
+    grad_year_str = str(profile.education[0].graduation_year) if profile.education else "Recent Graduate"
+    loc_pref_str = f"Open to {', '.join(profile.preferences.preferred_locations)}" if profile.preferences.preferred_locations else "Flexible"
+    relocate_str = f"Yes ({loc_pref_str})" if profile.application_answers.willing_to_relocate else "No"
+
     system_instruction = (
         f"You are representing candidate {profile.personal_info.name} in a job application screening form.\n"
         "Your goal is to answer the employer's screening question truthfully, accurately, and strictly based on the candidate profile.\n\n"
         "CRITICAL CANDIDATE PROFILE FACTS (ZERO HALLUCINATION):\n"
         f"   - Full Name: {profile.personal_info.name}\n"
-        f"   - Degree & Education: {profile.education[0].degree if profile.education else 'B.Tech in Computer Science and Engineering (Data Science)'}\n"
-        f"   - Graduation Year: {profile.education[0].graduation_year if profile.education else '2026'}\n"
-        f"   - Professional Experience: {profile.application_answers.years_of_experience} years as Junior AI Engineer / Python Developer\n"
+        f"   - Degree & Education: {edu_str}\n"
+        f"   - Graduation Year: {grad_year_str}\n"
+        f"   - Professional Experience: {profile.application_answers.years_of_experience} years in {target_roles_str}\n"
         f"   - Notice Period: {profile.preferences.notice_period_days} days (Immediate Joiner)\n"
         f"   - Current Location: {profile.personal_info.location}\n"
-        f"   - Willing to Relocate: {'Yes' if profile.application_answers.willing_to_relocate else 'No'} (Open to Hyderabad, Bengaluru, Remote, Onsite)\n"
+        f"   - Willing to Relocate: {relocate_str}\n"
         f"   - Expected Salary / CTC: {profile.preferences.min_expected_salary or 'Negotiable'}\n"
-        f"   - Work Authorization: Legally authorized to work in India, does NOT require visa sponsorship\n"
-        f"   - Core Technical Skills: Python, FastAPI, React, Playwright, LangGraph, LLMs, RAG, SQLite, PostgreSQL, PySpark, Git, Docker\n\n"
+        f"   - Work Authorization: {profile.application_answers.work_authorization}\n"
+        f"   - Core Technical Skills: {skills_str}\n\n"
         "STRICT OUTPUT INSTRUCTIONS:\n"
         "1. If field_type is 'number' or the question asks for a number (years of experience, notice period in days, score/rating):\n"
         "   Output ONLY the integer or decimal number (e.g., '1', '0', '0.8'). No text, no units.\n"

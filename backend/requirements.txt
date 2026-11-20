@@ -13,9 +13,10 @@ bcrypt>=4.0.0,<6.0.0
 pyjwt>=2.8.0,<3.0.0
 cryptography>=42.0.0,<45.0.0
 
-# Database & Async Engine
+# Database & Async Engine (SQLite & PostgreSQL)
 sqlalchemy>=2.0.0,<3.0.0
 aiosqlite>=0.20.0,<1.0.0
+psycopg2-binary>=2.9.9,<3.0.0
 
 # High-Performance API & Server
 fastapi>=0.115.0,<1.0.0

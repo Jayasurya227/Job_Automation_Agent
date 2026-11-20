@@ -600,6 +600,11 @@ def _scrape_naukri_sync(
     logger.info(f"Launching Naukri sync worker thread (channel='chrome', freshness={freshness_days}d, exp={experience_level}): {url}")
     raw_jobs: List[DiscoveredJob] = []
 
+    from app.core.user_storage import get_user_browser_lock
+    target_uid = user_id if user_id is not None else 1
+    user_lock = get_user_browser_lock(target_uid)
+    user_lock.acquire()
+
     p = None
     context = None
     try:
@@ -846,6 +851,10 @@ def _scrape_naukri_sync(
             except Exception:
                 pass
         sanitize_session_preferences(session_dir)
+        try:
+            user_lock.release()
+        except Exception:
+            pass
 
 
 async def scrape_naukri_playwright(

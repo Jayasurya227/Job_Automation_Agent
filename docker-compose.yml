@@ -20,6 +20,8 @@ services:
       - PYTHONUNBUFFERED=1
       - DATABASE_URL=sqlite:////app/data/jobs.db
       - PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-${SECRET_KEY:-autonomous_job_agent_super_secret_jwt_key_2026_production}}
+      - ENVIRONMENT=${ENVIRONMENT:-development}
     volumes:
       # Persistent SQLite database, multi-tenant user storage vaults, and browser cookies
       - ./backend/data:/app/data

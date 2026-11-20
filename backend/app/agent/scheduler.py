@@ -13,7 +13,7 @@ import asyncio
 import json
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 
@@ -27,8 +27,14 @@ from app.utils.event_bus import emit_event
 
 logger = logging.getLogger("agent.scheduler")
 
-OFFICE_START_HOUR = 9   # 9:00 AM
-OFFICE_END_HOUR = 21    # 9:00 PM (21:00)
+IST_TIMEZONE = timezone(timedelta(hours=5, minutes=30), name="IST")
+
+def get_now_ist() -> datetime:
+    """Returns the current timezone-aware datetime in Indian Standard Time (IST, UTC+05:30)."""
+    return datetime.now(timezone.utc).astimezone(IST_TIMEZONE)
+
+OFFICE_START_HOUR = 9   # 9:00 AM IST
+OFFICE_END_HOUR = 21    # 9:00 PM IST (21:00)
 
 TIMETABLE_SLOTS = [
     {"start": 540, "end": 600, "phase": "work", "slot_id": 1, "time_label": "09:00 AM – 10:00 AM", "name": "Work Slot 1"},
@@ -55,8 +61,16 @@ def get_portal_timeline_slot(dt: Optional[datetime] = None, user_id: Optional[in
     Resolves the exact 1-Hour Work + 30-Minute Break timetable slot for Naukri.
     Active Office Window: 9:00 AM – 9:00 PM IST (09:00 to 21:00).
     Scoped dynamically per user_id to showcase candidate's rotating priority roles.
+    Always operates in Indian Standard Time (IST) regardless of server timezone.
     """
-    now = dt or datetime.now()
+    if dt is not None:
+        if dt.tzinfo is None:
+            now = dt
+        else:
+            now = dt.astimezone(IST_TIMEZONE)
+    else:
+        now = get_now_ist()
+
     current_minutes = now.hour * 60 + now.minute
     current_seconds = now.second
 
@@ -105,8 +119,8 @@ def get_portal_timeline_slot(dt: Optional[datetime] = None, user_id: Optional[in
     active_role = None
     next_role = None
     try:
-        profile = load_user_profile(user_id or 1)
-        target_roles = getattr(profile.preferences, "target_roles", []) or []
+        profile = load_user_profile(user_id=user_id) if user_id is not None else None
+        target_roles = (getattr(profile.preferences, "target_roles", []) or []) if profile else []
         if target_roles:
             if active_slot_id > 0:
                 active_role = target_roles[(active_slot_id - 1) % len(target_roles)]
@@ -185,7 +199,7 @@ class AutoPilotScheduler:
             except RuntimeError:
                 self._wake_event.set()
 
-    def get_status(self, user_id: int = 1) -> Dict[str, Any]:
+    def get_status(self, user_id: int) -> Dict[str, Any]:
         """Returns the real-time status of the Auto-Pilot scheduler scoped strictly to user_id."""
         state = self._get_or_create_user_state(user_id)
         try:
@@ -200,7 +214,7 @@ class AutoPilotScheduler:
         except Exception:
             pass
 
-        now = datetime.now()
+        now = get_now_ist()
         enabled = getattr(prefs, 'autopilot_enabled', False) if prefs else False
         auto_score = getattr(prefs, 'autopilot_auto_apply_score', 70) if prefs else 70
         max_apps = getattr(prefs, 'autopilot_max_daily_apps', 7) if prefs else 7
@@ -231,6 +245,19 @@ class AutoPilotScheduler:
             "timeline": timeline_info,
         }
 
+    async def trigger_user_now(self, user_id: int = 1) -> str:
+        """
+        Enqueues an immediate Auto-Pilot discovery & apply cycle into the MultiTenantTaskQueue
+        specifically for user_id. Returns the task_id.
+        """
+        task = await task_queue.enqueue_task(
+            user_id=user_id,
+            task_type="autopilot_run",
+            payload={"trigger_source": "manual_run_now"},
+            custom_coro_fn=lambda t: self.execute_run(user_id=t.user_id, trigger_source="manual_run_now")
+        )
+        return task.task_id
+
     async def execute_run(self, user_id: int = 1, trigger_source: str = "scheduler") -> Dict[str, Any]:
         """
         Executes an autonomous discovery & 1-click application run strictly scoped to user_id.
@@ -248,7 +275,7 @@ class AutoPilotScheduler:
 
         async with user_lock:
             state["is_executing"] = True
-            start_time = datetime.now()
+            start_time = get_now_ist()
 
             timeline_slot = get_portal_timeline_slot(start_time, user_id=user_id)
             active_portal = "naukri"
@@ -271,7 +298,6 @@ class AutoPilotScheduler:
                 "message": f"Auto-Pilot started discovery scan on {portal_label} ({slot_label}) [{trigger_source}]."
             }
             emit_event(f"autopilot:{user_id}", "status", status_payload)
-            emit_event("autopilot", "status", status_payload)
 
             try:
                 profile = load_user_profile(user_id)
@@ -313,7 +339,6 @@ class AutoPilotScheduler:
                     elif state["daily_applications_count"] >= max_daily:
                         logger.info(f"Daily safety quota reached for User {user_id} ({state['daily_applications_count']}/{max_daily}). Auto-apply paused for today.")
                         emit_event(f"autopilot:{user_id}", "quota_reached", {"user_id": user_id, "applied_today": state["daily_applications_count"], "max_daily": max_daily})
-                        emit_event("autopilot", "quota_reached", {"user_id": user_id, "applied_today": state["daily_applications_count"], "max_daily": max_daily})
 
                     # 4. Step 2: Discover fresh listings for Naukri (Dynamic Slot Rotation)
                     slot_id = timeline_slot.get("slot_id") or 1
@@ -350,8 +375,9 @@ class AutoPilotScheduler:
 
                     review_remaining = len(crud.list_jobs(db=db, limit=100, status="Ready", user_id=user_id))
 
-                state["last_run_date"] = datetime.now().strftime("%Y-%m-%d")
-                state["last_run_time"] = datetime.now().strftime("%H:%M:%S")
+                now_ist = get_now_ist()
+                state["last_run_date"] = now_ist.strftime("%Y-%m-%d")
+                state["last_run_time"] = now_ist.strftime("%H:%M:%S")
                 state["last_run_report"] = {
                     "user_id": user_id,
                     "discovered": report.total_discovered if report else 0,
@@ -375,7 +401,6 @@ class AutoPilotScheduler:
                     "message": f"Auto-Pilot completed for User {user_id}! {applied_in_this_run} auto-applied today ({state['daily_applications_count']}/{max_daily}). {review_remaining} waiting in Review queue."
                 }
                 emit_event(f"autopilot:{user_id}", "status", completed_payload)
-                emit_event("autopilot", "status", completed_payload)
 
                 return {
                     "status": "success",
@@ -391,7 +416,6 @@ class AutoPilotScheduler:
                     "message": f"Auto-Pilot notice for User {user_id}: {str(e)}"
                 }
                 emit_event(f"autopilot:{user_id}", "status", err_payload)
-                emit_event("autopilot", "status", err_payload)
                 return {"status": "error", "user_id": user_id, "detail": str(e)}
             finally:
                 state["is_executing"] = False
@@ -415,8 +439,13 @@ class AutoPilotScheduler:
             try:
                 prof = load_user_profile(uid)
                 if getattr(prof.preferences, "autopilot_enabled", False):
-                    # Enqueue or launch execution asynchronously
-                    asyncio.create_task(self.execute_run(user_id=uid, trigger_source=trigger_source))
+                    # Enqueue through rate-limited task queue
+                    await task_queue.enqueue_task(
+                        user_id=uid,
+                        task_type="autopilot_run",
+                        payload={"trigger_source": trigger_source},
+                        custom_coro_fn=lambda t: self.execute_run(user_id=t.user_id, trigger_source=trigger_source)
+                    )
             except Exception as u_err:
                 logger.debug(f"User {uid} profile evaluation notice: {u_err}")
 
@@ -425,15 +454,16 @@ class AutoPilotScheduler:
         logger.info("🕒 Auto-Pilot Scheduler background loop active (Office Hours: 9:00 AM – 9:00 PM IST).")
         while self._is_running:
             try:
-                now = datetime.now()
+                now = get_now_ist()
                 timeline_info = get_portal_timeline_slot(now)
                 is_office_hours = timeline_info["is_office_hours"]
                 phase = timeline_info["phase"]
                 slot_id = timeline_info["slot_id"]
 
-                # 1. Automatic 9:00 PM Cutoff: Turn OFF for all users when 9:00 PM is reached
+                # 1. Automatic 9:00 PM Cutoff: Enter night standby without resetting user preference
                 if now.hour >= OFFICE_END_HOUR or now.hour < OFFICE_START_HOUR:
-                    # Office hours are closed
+                    # Office hours are closed; reset executed slot tracking for morning
+                    self._last_executed_slot_id = 0
                     try:
                         with SessionLocal() as db:
                             users = db.query(User).filter(User.is_active == True).all()
@@ -445,18 +475,16 @@ class AutoPilotScheduler:
                         try:
                             prof = load_user_profile(uid)
                             if getattr(prof.preferences, "autopilot_enabled", False):
-                                logger.info(f"🌙 [User {uid}] 9:00 PM reached. Office hours closed. Auto-Pilot automatically turning OFF.")
-                                prof.preferences.autopilot_enabled = False
-                                save_user_profile(uid, prof)
+                                logger.info(f"🌙 [User {uid}] 9:00 PM reached. Office hours closed. Auto-Pilot entering night standby.")
+                                # Preserve user's master preference (autopilot_enabled remains True so it wakes up at 9:00 AM)
                                 cutoff_payload = {
                                     "user_id": uid,
                                     "state": "idle",
-                                    "enabled": False,
+                                    "enabled": True,
                                     "phase": "closed",
-                                    "message": "🌙 9:00 PM reached. Office hours ended. Auto-Pilot automatically turned OFF."
+                                    "message": "🌙 9:00 PM reached. Office hours ended. Auto-Pilot in standby until 09:00 AM IST."
                                 }
                                 emit_event(f"autopilot:{uid}", "status", cutoff_payload)
-                                emit_event("autopilot", "status", cutoff_payload)
                         except Exception:
                             pass
 

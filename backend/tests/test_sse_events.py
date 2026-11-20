@@ -11,7 +11,7 @@ import asyncio
 from pathlib import Path
 
 # Add backend directory to sys.path
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
@@ -81,11 +81,13 @@ def run_tests():
     print("\n[TEST 3/4] Testing FastAPI /api/events/stream Endpoint...", flush=True)
     from fastapi import Request
     from main import stream_events
+    from app.core.security import create_access_token
 
     async def test_sse_endpoint():
         event_bus.publish("test_channel", "ping_event", {"msg": "hello_sse"})
-        req = Request(scope={"type": "http", "method": "GET", "path": "/api/events/stream"})
-        resp = await stream_events(req, topic="test_channel")
+        req = Request(scope={"type": "http", "method": "GET", "path": "/api/events/stream", "headers": []})
+        test_token = create_access_token(1, "test@example.com")
+        resp = await stream_events(req, topic="test_channel", token=test_token)
         assert resp.media_type == "text/event-stream"
         assert resp.headers["Cache-Control"] == "no-cache"
 

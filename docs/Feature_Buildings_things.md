@@ -93,5 +93,22 @@ The following items are cataloged for future consideration as optional feature e
 ### 3. Automated Weekly Performance Email Digest
 - **Concept**: Scheduled weekly email summary sent via SMTP detailing total applications submitted, interview callback conversion rates, and top recruiter keywords.
 
+### 4. Gmail Inbox Reader & AI Reply Categorizer (Priority Next Feature)
+- **Concept**: Connect securely via Gmail IMAP (using Google App Password) to read incoming recruiter responses without any portal bot/ban risk (0% ban risk).
+- **Value**:
+  - Uses Anthropic Claude AI to classify incoming emails into structured categories: `Interview Invite`, `Rejection`, `Positive Response`, `Action Required`, or `Neutral`.
+  - Automatically moves the corresponding job card on the React Kanban board to the `Interview` or `Rejected` column in real time.
+
+### 5. Automated Follow-Up Email Scheduler
+- **Concept**: Tracks outgoing recruiter cold emails and monitors reply windows per candidate (`user_id`).
+- **Value**:
+  - If no recruiter reply is detected within a configurable 5–7 day window, automatically drafts and sends a polite, natural follow-up email (or queues it for one-click Human Approval).
+
+### 6. Self-Learning Analytics & Profile Optimization Loop
+- **Concept**: Closed-loop historical feedback analyzer examining past applications, ATS match scores, outreach messages, interview callbacks, and rejections.
+- **Value**:
+  - Identifies which skills, keywords, job titles, and outreach subject lines generate the highest interview callback rates.
+  - Surfaces actionable, zero-hallucination profile and resume optimization recommendations directly on the candidate dashboard without altering factual history.
+
 ---
 *This ledger reflects current production state. All completed milestones have been rigorously tested and verified.*

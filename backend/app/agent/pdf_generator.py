@@ -304,12 +304,16 @@ def render_html_to_pdf_bytes(html_content: str) -> bytes:
             browser.close()
 
 
-def generate_candidate_master_pdf(profile_data: Dict[str, Any], output_filename: str = "master_resume.pdf") -> str:
+def generate_candidate_master_pdf(profile_data: Dict[str, Any], output_filename: str = "master_resume.pdf", user_id: Any = None) -> str:
     """
-    Generates and saves the master candidate PDF in output/resumes/.
+    Generates and saves the master candidate PDF scoped to user_id.
     Returns the absolute path of the generated PDF.
     """
-    resumes_dir = OUTPUT_DIR / "resumes"
+    if user_id:
+        from app.core.user_storage import get_user_tailored_resumes_dir
+        resumes_dir = get_user_tailored_resumes_dir(int(user_id))
+    else:
+        resumes_dir = OUTPUT_DIR / "resumes"
     resumes_dir.mkdir(parents=True, exist_ok=True)
     target_path = resumes_dir / output_filename
 

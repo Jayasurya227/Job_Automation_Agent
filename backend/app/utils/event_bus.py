@@ -48,14 +48,14 @@ class EventBus:
         Returns an asyncio.Queue that receives new events.
         """
         queue: asyncio.Queue = asyncio.Queue(maxsize=100)
-        async with self._async_lock:
+        with self._lock:
             self._subscribers[topic].add(queue)
             logger.debug(f"Client subscribed to topic '{topic}'. Active subscribers: {len(self._subscribers[topic])}")
         return queue
 
     async def unsubscribe(self, topic: str, queue: asyncio.Queue):
         """Removes a subscriber queue to prevent memory leaks."""
-        async with self._async_lock:
+        with self._lock:
             if topic in self._subscribers and queue in self._subscribers[topic]:
                 self._subscribers[topic].remove(queue)
                 if not self._subscribers[topic]:
@@ -79,18 +79,25 @@ class EventBus:
             "timestamp": now,
         }
 
-        # Store in rolling history buffer
+        # Check if topic is a private user-scoped channel (e.g. autopilot:2, discovery:2, task:2)
+        is_private_channel = False
+        if ":" in topic:
+            parts = topic.split(":", 1)
+            if parts[1].isdigit():
+                is_private_channel = True
+
+        # Store in rolling history buffer (private channels are never leaked to 'all')
         self._history[topic].append(event)
-        if topic != "all":
+        if topic != "all" and not is_private_channel:
             self._history["all"].append(event)
 
-        # Broadcast to topic subscribers and 'all' subscribers
+        # Broadcast to topic subscribers and 'all' subscribers (private channels never broadcast to 'all')
         targets = []
         # Use threading.Lock (non-async) so this is safe from any thread context
         with self._lock:
             if topic in self._subscribers:
                 targets.extend(list(self._subscribers[topic]))
-            if "all" in self._subscribers and topic != "all":
+            if not is_private_channel and "all" in self._subscribers and topic != "all":
                 targets.extend(list(self._subscribers["all"]))
 
         if not targets:

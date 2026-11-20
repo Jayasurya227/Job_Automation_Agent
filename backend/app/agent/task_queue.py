@@ -235,7 +235,8 @@ class MultiTenantTaskQueue:
                 task.status = TaskStatus.CANCELLED
                 task.completed_at = datetime.now(timezone.utc).isoformat()
                 task.progress_message = "Task cancelled during execution."
-                break
+                if not self._is_running:
+                    break
             except Exception as e:
                 logger.error(f"❌ [Worker #{worker_id}] Task {task.task_id} failed for User {task.user_id}: {e}", exc_info=True)
                 task.status = TaskStatus.FAILED
@@ -288,6 +289,13 @@ class MultiTenantTaskQueue:
         elif task_type in ["profile_boost", "boost_naukri"]:
             from app.agent.booster import boost_naukri_profile_live
             return await boost_naukri_profile_live(user_id=task.user_id)
+
+        elif task_type in ["autopilot_run", "autopilot"]:
+            from app.agent.scheduler import autopilot_scheduler
+            return await autopilot_scheduler.execute_run(
+                user_id=task.user_id,
+                trigger_source=task.payload.get("trigger_source", "task_queue")
+            )
 
         else:
             raise ValueError(f"Unknown task type: '{task.task_type}'")

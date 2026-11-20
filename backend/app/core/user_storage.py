@@ -14,7 +14,7 @@ import shutil
 import json
 import logging
 from pathlib import Path
-from typing import Optional, Dict
+from typing import Optional, Dict, Any
 
 from app.config import DATA_DIR, BASE_DIR
 from app.schemas.profile import CandidateProfile
@@ -28,6 +28,7 @@ USERS_ROOT_DIR.mkdir(parents=True, exist_ok=True)
 LEGACY_GLOBAL_PROFILE = BASE_DIR / "profile.json"
 LEGACY_GLOBAL_RESUME = DATA_DIR / "uploaded_resume.pdf"
 LEGACY_GLOBAL_SESSION = DATA_DIR / "browser_session"
+LEGACY_GLOBAL_INDEED_SESSION = DATA_DIR / "indeed_session"
 
 
 def get_user_base_dir(user_id: int) -> Path:
@@ -50,6 +51,13 @@ def get_user_resume_path(user_id: int) -> Path:
 def get_user_browser_session_dir(user_id: int) -> Path:
     """Returns path to the user's isolated Naukri Chromium session folder."""
     session_dir = get_user_base_dir(user_id) / "browser_session"
+    session_dir.mkdir(parents=True, exist_ok=True)
+    return session_dir
+
+
+def get_user_indeed_session_dir(user_id: int) -> Path:
+    """Returns path to the user's isolated Indeed Chromium session folder."""
+    session_dir = get_user_base_dir(user_id) / "indeed_session"
     session_dir.mkdir(parents=True, exist_ok=True)
     return session_dir
 
@@ -78,6 +86,7 @@ def ensure_user_storage(user_id: int) -> Dict[str, Path]:
     profile_path = get_user_profile_path(user_id)
     resume_path = get_user_resume_path(user_id)
     session_dir = get_user_browser_session_dir(user_id)
+    indeed_session_dir = get_user_indeed_session_dir(user_id)
     snapshots_dir = get_user_snapshots_dir(user_id)
     tailored_dir = get_user_tailored_resumes_dir(user_id)
 
@@ -113,11 +122,26 @@ def ensure_user_storage(user_id: int) -> Dict[str, Path]:
         except Exception as e:
             logger.warning(f"Browser session migration notice for User 1: {e}")
 
+        # 4. Indeed Browser Session migration
+        try:
+            has_existing_indeed_files = indeed_session_dir.exists() and any(indeed_session_dir.iterdir())
+            if not has_existing_indeed_files and LEGACY_GLOBAL_INDEED_SESSION.exists() and any(LEGACY_GLOBAL_INDEED_SESSION.iterdir()):
+                for item in LEGACY_GLOBAL_INDEED_SESSION.iterdir():
+                    dest = indeed_session_dir / item.name
+                    if item.is_dir() and not dest.exists():
+                        shutil.copytree(item, dest)
+                    elif item.is_file() and not dest.exists():
+                        shutil.copy2(item, dest)
+                logger.info("Safely migrated User 1 Indeed session into users/1/indeed_session/")
+        except Exception as e:
+            logger.warning(f"Indeed session migration notice for User 1: {e}")
+
     return {
         "base_dir": base_dir,
         "profile_path": profile_path,
         "resume_path": resume_path,
         "browser_session_dir": session_dir,
+        "indeed_session_dir": indeed_session_dir,
         "snapshots_dir": snapshots_dir,
         "tailored_resumes_dir": tailored_dir,
     }
@@ -249,4 +273,150 @@ def get_user_resume(user_id: int) -> Optional[Path]:
     if resume_path.exists() and resume_path.stat().st_size > 0:
         return resume_path
     return None
+
+
+# -----------------------------------------------------------------------------
+# Centralized Per-User Browser Session Mutex Locks (Chromium Singleton Guard)
+# -----------------------------------------------------------------------------
+import threading
+import asyncio
+from collections import defaultdict
+from contextlib import contextmanager, asynccontextmanager
+
+_user_browser_locks: Dict[int, threading.Lock] = defaultdict(threading.Lock)
+_global_lock_registry_lock = threading.Lock()
+
+
+def get_user_browser_lock(user_id: int) -> threading.Lock:
+    """
+    Returns the process-wide mutual exclusion lock for a specific user's browser session directory.
+    Guarantees thread-safe access to Chromium user_data_dir across all workers (booster, applier, auth, scraper).
+    """
+    with _global_lock_registry_lock:
+        return _user_browser_locks[user_id]
+
+
+@contextmanager
+def user_browser_lock(user_id: int, blocking: bool = True, timeout: float = 60.0):
+    """
+    Synchronous context manager for acquiring a user's browser session lock.
+    Used by synchronous Playwright worker threads (applier.py, booster.py, scraper.py).
+    """
+    lock = get_user_browser_lock(user_id)
+    acquired = lock.acquire(blocking=blocking, timeout=timeout)
+    if not acquired:
+        raise BlockingIOError(f"User {user_id}'s browser session is currently locked by another active operation.")
+    try:
+        yield lock
+    finally:
+        lock.release()
+
+
+@asynccontextmanager
+async def async_user_browser_lock(user_id: int, timeout: float = 60.0):
+    """
+    Asynchronous context manager for acquiring a user's browser session lock without blocking the event loop.
+    Used by async Playwright operations (headless_auth.py, browser.py).
+    """
+    lock = get_user_browser_lock(user_id)
+    acquired = await asyncio.to_thread(lock.acquire, True, timeout)
+    if not acquired:
+        raise BlockingIOError(f"Timeout waiting for User {user_id}'s browser session lock.")
+    try:
+        yield lock
+    finally:
+        lock.release()
+
+
+# -----------------------------------------------------------------------------
+# Persistent Workflow Session Storage (Anti-Data-Loss & Multi-Worker State)
+# -----------------------------------------------------------------------------
+def get_user_workflow_sessions_dir(user_id: int) -> Path:
+    """Returns dedicated directory for pending workflow sessions scoped to user_id."""
+    sessions_dir = get_user_base_dir(user_id) / "workflow_sessions"
+    sessions_dir.mkdir(parents=True, exist_ok=True)
+    return sessions_dir
+
+
+def save_workflow_session(user_id: int, thread_id: str, state: Dict[str, Any]) -> Path:
+    """
+    Persists pending review gateway workflow state to user's isolated storage atomically.
+    Survives server restarts and enables seamless multi-worker cloud execution.
+    """
+    sessions_dir = get_user_workflow_sessions_dir(user_id)
+    session_file = sessions_dir / f"{thread_id}.json"
+    temp_file = sessions_dir / f"{thread_id}.tmp"
+
+    clean_state: Dict[str, Any] = {}
+    for k, v in state.items():
+        try:
+            json.dumps({k: v})
+            clean_state[k] = v
+        except Exception:
+            clean_state[k] = str(v)
+
+    with open(temp_file, "w", encoding="utf-8") as f:
+        json.dump(clean_state, f, indent=2, ensure_ascii=False)
+        f.flush()
+        os.fsync(f.fileno())
+
+    os.replace(temp_file, session_file)
+    logger.info(f"User {user_id} workflow session '{thread_id}' saved atomically to {session_file}")
+    return session_file
+
+
+def get_workflow_session(thread_id: str, user_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
+    """
+    Retrieves pending workflow session state by thread_id.
+    If user_id is provided, searches strictly in user's vault.
+    If user_id is None, searches across all vaults for ownership resolution.
+    """
+    if user_id is not None:
+        session_file = get_user_workflow_sessions_dir(user_id) / f"{thread_id}.json"
+        if session_file.exists():
+            try:
+                return json.loads(session_file.read_text(encoding="utf-8"))
+            except Exception as e:
+                logger.error(f"Failed to read session file {session_file}: {e}")
+                return None
+        return None
+
+    if USERS_ROOT_DIR.exists():
+        for u_dir in USERS_ROOT_DIR.iterdir():
+            if u_dir.is_dir():
+                s_file = u_dir / "workflow_sessions" / f"{thread_id}.json"
+                if s_file.exists():
+                    try:
+                        return json.loads(s_file.read_text(encoding="utf-8"))
+                    except Exception:
+                        return None
+    return None
+
+
+def delete_workflow_session(thread_id: str, user_id: Optional[int] = None) -> bool:
+    """Removes a completed or resumed workflow session file."""
+    deleted = False
+    if user_id is not None:
+        session_file = get_user_workflow_sessions_dir(user_id) / f"{thread_id}.json"
+        if session_file.exists():
+            try:
+                session_file.unlink()
+                deleted = True
+            except Exception as e:
+                logger.warning(f"Failed to delete session file {session_file}: {e}")
+        return deleted
+
+    if USERS_ROOT_DIR.exists():
+        for u_dir in USERS_ROOT_DIR.iterdir():
+            if u_dir.is_dir():
+                s_file = u_dir / "workflow_sessions" / f"{thread_id}.json"
+                if s_file.exists():
+                    try:
+                        s_file.unlink()
+                        deleted = True
+                    except Exception:
+                        pass
+    return deleted
+
+
 

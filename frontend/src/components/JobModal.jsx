@@ -335,7 +335,25 @@ export default function JobModal({
 
         {/* Modal Footer */}
         <div className="job-modal-footer" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            {job?.id && (
+              <a
+                href={api.downloadTailoredResumePdfUrl(job.id)}
+                download
+                className="btn btn-secondary btn-sm"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  fontWeight: 600,
+                  fontSize: '0.82rem',
+                  padding: '7px 12px'
+                }}
+                title="Download ATS Resume PDF for this job"
+              >
+                <Download size={14} /> Resume (PDF)
+              </a>
+            )}
             {job?.job_url && job?.status !== 'Applied' && (
               <button
                 type="button"

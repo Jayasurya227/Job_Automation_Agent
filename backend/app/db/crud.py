@@ -132,12 +132,6 @@ def get_jobs_history(
     if user_id is not None:
         query = query.filter(Job.user_id == user_id)
     all_jobs = query.order_by(Job.created_at.desc()).all()
-    import calendar
-    now = datetime.utcnow()
-    target_year = year if year is not None else now.year
-    target_month = month if month is not None else now.month
-
-    all_jobs = db.query(Job).order_by(Job.created_at.desc()).all()
 
     # Extract available months from all jobs in database
     months_map = {}

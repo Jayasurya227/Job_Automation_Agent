@@ -419,6 +419,20 @@ export default function ProfileEditor({ isOpen, onClose, notify, onProfileUpdate
                       >
                         <FileText size={15} /> Select PDF Resume
                       </button>
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-sm"
+                        style={{ padding: '7px 18px', fontSize: '0.82rem', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDownloadResume();
+                        }}
+                        disabled={downloadingPdf}
+                        title="Download ATS PDF Resume"
+                      >
+                        {downloadingPdf ? <Loader2 size={15} className="spin" /> : <Download size={15} />}
+                        <span>{downloadingPdf ? 'Compiling PDF...' : 'Download Resume (PDF)'}</span>
+                      </button>
                     </div>
 
                     {/* Extracted Stats Summary Badge */}

@@ -62,7 +62,6 @@ export default function App() {
   const [isDiscovering, setIsDiscovering] = useState(false);
   const [toasts, setToasts] = useState([]);
   const [naukriSession, setNaukriSession] = useState(null);
-  const [indeedSession, setIndeedSession] = useState(null);
   const [autopilotStatus, setAutopilotStatus] = useState(null);
   const [applyingJobId, setApplyingJobId] = useState(null);
   const [isQuotaModalOpen, setIsQuotaModalOpen] = useState(false);
@@ -103,15 +102,45 @@ export default function App() {
   }, []);
 
   const handleLogin = useCallback((userData) => {
+    // Zero-Trace Switch: Clear previous user data from memory before populating fresh workspace
+    setJobs([]);
+    setMetrics(null);
+    setProfile(null);
+    setSelectedJobId(null);
+    setNaukriSession(null);
+    setAutopilotStatus(null);
+    setIsQuotaModalOpen(false);
+    setIsDiscovering(false);
     setCurrentUser(userData);
     notify(`Welcome ${userData.full_name || userData.firstName || 'Candidate'}! Pipeline workspace unlocked.`, 'success');
   }, [notify]);
 
-  const handleLogout = useCallback(() => {
+  const handleLogout = useCallback((reason = null, type = 'info') => {
     clearAuthToken();
     setCurrentUser(null);
-    notify('Signed out from workspace.', 'info');
+    // Zero-Trace Logout State Purge (Bug 25): Flush all in-memory cache to prevent data leaks across sessions
+    setJobs([]);
+    setMetrics(null);
+    setProfile(null);
+    setSelectedJobId(null);
+    setNaukriSession(null);
+    setAutopilotStatus(null);
+    setIsQuotaModalOpen(false);
+    setIsDiscovering(false);
+    const message = typeof reason === 'string' ? reason : 'Signed out from workspace.';
+    notify(message, typeof reason === 'string' ? type : 'info');
   }, [notify]);
+
+  // Issue 12: Listen for session expiry from API interceptor and gracefully return to AuthPage
+  useEffect(() => {
+    const handleAuthExpired = () => {
+      handleLogout('Your session has expired. Please sign in again.', 'warning');
+    };
+    window.addEventListener('auth:expired', handleAuthExpired);
+    return () => {
+      window.removeEventListener('auth:expired', handleAuthExpired);
+    };
+  }, [handleLogout]);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -127,13 +156,12 @@ export default function App() {
       }
 
       // 2. Fetch jobs, metrics, profile, session status & autopilot status using Promise.allSettled
-      // Prevents a single dropped/delayed fetch on mobile networks from falsely marking the entire backend offline
-      const [jobsRes, metricsRes, profileRes, naukriRes, indeedRes, autopilotRes] = await Promise.allSettled([
+      // 100% Naukri-focused architecture (Indeed frozen & disabled)
+      const [jobsRes, metricsRes, profileRes, naukriRes, autopilotRes] = await Promise.allSettled([
         api.getJobs(),
         api.getMetrics(),
         api.getProfile(),
         api.getNaukriSessionStatus(),
-        api.getIndeedSessionStatus(),
         api.getAutopilotStatus(),
       ]);
 
@@ -148,9 +176,6 @@ export default function App() {
       }
       if (naukriRes.status === 'fulfilled' && naukriRes.value) {
         setNaukriSession(naukriRes.value);
-      }
-      if (indeedRes.status === 'fulfilled' && indeedRes.value) {
-        setIndeedSession(indeedRes.value);
       }
       if (autopilotRes.status === 'fulfilled' && autopilotRes.value) {
         setAutopilotStatus(autopilotRes.value);
@@ -186,10 +211,11 @@ export default function App() {
     return () => clearInterval(timer);
   }, []);
 
-  // Real-Time Server-Sent Events (SSE) Listener for Safety Quota & Agent Events
+  // Real-Time Server-Sent Events (SSE) Listener for Safety Quota & Agent Events (Bug 23: User-scoped)
   useEffect(() => {
-    if (!currentUser) return;
-    const unsubscribe = api.subscribeToEvents('all', (data, eventType) => {
+    if (!currentUser?.id) return;
+    const userTopic = `autopilot:${currentUser.id}`;
+    const unsubscribe = api.subscribeToEvents(userTopic, (data, eventType) => {
       if (eventType === 'quota_reached' || data?.event === 'quota_reached') {
         setIsQuotaModalOpen(true);
         notify('🛡️ Daily application limit reached. Auto-apply paused for today to protect your account.', 'warning');

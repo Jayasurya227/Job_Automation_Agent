@@ -124,19 +124,20 @@ def _result(
     }
 
 
-def _record_applied(job_id: Optional[int], pdf_path: Optional[str], note: str) -> None:
+def _record_applied(job_id: Optional[int], pdf_path: Optional[str], note: str, user_id: Optional[int] = None) -> None:
     """Marks a job as Applied in SQLite. Only call this after a confirmed submission."""
     if not job_id:
         return
     try:
         with SessionLocal() as db:
-            crud.update_job_status(db=db, job_id=job_id, status="Applied")
+            crud.update_job_status(db=db, job_id=job_id, status="Applied", user_id=user_id)
             crud.create_or_update_application(
                 db=db,
                 job_id=job_id,
                 status="Applied",
                 pdf_path=pdf_path or "",
                 notes=note,
+                user_id=user_id,
             )
     except Exception as db_err:
         logger.warning(f"Could not update status to Applied in SQLite: {db_err}")
@@ -178,7 +179,9 @@ def run_application_workflow(
     """
     tid = thread_id or f"wf_{int(time.time() * 1000)}"
     ts = _get_timestamp()
-    uid = user_id or 1
+    if user_id is None:
+        raise ValueError("user_id is strictly required for run_application_workflow in multi-user mode.")
+    uid = user_id
 
     # 1. Master resume resolution scoped strictly to user_id (Zero-Theft Guard)
     from app.core.user_storage import get_user_resume
@@ -271,7 +274,7 @@ def run_application_workflow(
         if job_id:
             try:
                 with SessionLocal() as db:
-                    crud.update_job_status(db=db, job_id=job_id, status="Archived")
+                    crud.update_job_status(db=db, job_id=job_id, status="Archived", user_id=uid)
             except Exception:
                 pass
         _emit_workflow_event(state, step="archive", status="completed", message=log_msg)
@@ -352,7 +355,7 @@ def run_application_workflow(
         state["status"] = "SUBMITTED"
         log_msg = f"[{_get_timestamp()}] Application for {job_title} at {company_name} ({portal_name}) SUBMITTED."
         state["execution_logs"].append(log_msg)
-        _record_applied(job_id, pdf_path, note=f"Submitted via {portal_name} at {_get_timestamp()}")
+        _record_applied(job_id, pdf_path, note=f"Submitted via {portal_name} at {_get_timestamp()}", user_id=uid)
         _emit_workflow_event(
             state,
             step="submit",
@@ -377,6 +380,8 @@ def run_application_workflow(
             "timestamp": _get_timestamp(),
         }
         WORKFLOW_SESSIONS[tid] = state
+        from app.core.user_storage import save_workflow_session
+        save_workflow_session(uid, tid, state)
         _emit_workflow_event(
             state,
             step="review_gateway",
@@ -399,7 +404,8 @@ def run_application_workflow(
                     db=db,
                     job_id=job_id,
                     status=target_status,
-                    notes=f"External Company Portal:{note_suffix}"
+                    notes=f"External Company Portal:{note_suffix}",
+                    user_id=uid,
                 )
         except Exception as db_err:
             logger.debug(f"Notice updating external site application note: {db_err}")
@@ -429,10 +435,14 @@ def resume_application_workflow(
     submitting the exact browser state that was reviewed.
     """
     ts = _get_timestamp()
+    from app.core.user_storage import get_workflow_session, delete_workflow_session
+
     state = WORKFLOW_SESSIONS.pop(thread_id, None)
+    if state is None:
+        state = get_workflow_session(thread_id, user_id=user_id)
 
     if state is None:
-        msg = "No pending review found for this thread. It may have already been decided, or the server restarted."
+        msg = "No pending review found for this thread. It may have already been decided."
         logger.warning(f"[{thread_id}] {msg}")
         return {
             "thread_id": thread_id,
@@ -441,6 +451,9 @@ def resume_application_workflow(
             "status": "SESSION_NOT_FOUND",
             "execution_logs": [f"[{ts}] {msg}"],
         }
+
+    # Delete persisted session file upon decision (one-time execution guarantee)
+    delete_workflow_session(thread_id, user_id=state.get("user_id"))
 
     uid = user_id or state.get("user_id", 1)
 
@@ -460,10 +473,17 @@ def resume_application_workflow(
         "timestamp": ts
     })
 
+    job_id = state.get("job_id")
     if not approved:
         state["status"] = "REJECTED_BY_USER"
         state["rejection_reason"] = reason or "Rejected by candidate in review gateway"
         state["execution_logs"].append(f"[{ts}] Candidate REJECTED application: {reason or 'Manual Skip'}.")
+        if job_id:
+            try:
+                with SessionLocal() as db:
+                    crud.update_job_status(db=db, job_id=job_id, status="Archived", user_id=uid)
+            except Exception as e:
+                logger.debug(f"Notice updating rejected job status: {e}")
         return {
             "thread_id": thread_id,
             "state": state,
@@ -478,7 +498,6 @@ def resume_application_workflow(
     portal = state.get("portal_name", "Portal")
     job_url = state.get("job_url", "")
     pdf_path = state.get("tailored_resume_pdf_path")
-    job_id = state.get("job_id")
 
     if not job_url:
         _mark_blocked(state, status="NO_URL", message="No application URL on record. Nothing was submitted.", step="submit")
@@ -540,7 +559,7 @@ def resume_application_workflow(
     state["status"] = "SUBMITTED"
     log_msg = f"[{ts}] Application for {job_title} at {company} ({portal}) SUBMITTED."
     state["execution_logs"].append(log_msg)
-    _record_applied(job_id, pdf_path, note=f"Submitted via {portal} automated workflow at {ts}")
+    _record_applied(job_id, pdf_path, note=f"Submitted via {portal} automated workflow at {ts}", user_id=uid)
 
     _emit_workflow_event(
         state,

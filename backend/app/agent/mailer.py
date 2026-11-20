@@ -53,35 +53,61 @@ class AccountSettings(BaseModel):
     last_sent_date: Optional[str] = None
 
 
-def load_account_settings() -> AccountSettings:
-    """Loads account settings from local JSON file or environment variables."""
-    if SETTINGS_FILE.exists():
+def get_user_settings_path(user_id: Optional[int] = None) -> Path:
+    """Returns the user-scoped path for account_settings.json."""
+    if user_id:
+        from app.core.user_storage import get_user_base_dir
+        return get_user_base_dir(int(user_id)) / "account_settings.json"
+    return SETTINGS_FILE
+
+
+def load_account_settings(user_id: Optional[int] = None) -> AccountSettings:
+    """Loads account settings from isolated user storage, legacy JSON file, or environment variables."""
+    target_file = get_user_settings_path(user_id)
+
+    # Safe auto-migration for User 1 from legacy root file
+    if user_id == 1 and not target_file.exists() and SETTINGS_FILE.exists():
         try:
-            with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+            target_file.parent.mkdir(parents=True, exist_ok=True)
+            import shutil
+            shutil.copy2(SETTINGS_FILE, target_file)
+            logger.info("Safely migrated User 1 legacy account_settings.json into users/1/account_settings.json")
+        except Exception as e:
+            logger.debug(f"Notice migrating User 1 account settings: {e}")
+
+    if target_file.exists():
+        try:
+            with open(target_file, "r", encoding="utf-8-sig") as f:
                 data = json.load(f)
                 return AccountSettings(**data)
         except Exception as e:
-            logger.warning(f"Could not load account_settings.json ({e}). Using defaults.")
+            logger.warning(f"Could not load account settings from {target_file} ({e}). Using defaults.")
 
-    # Fallback to .env values if set
-    smtp_from_env = SMTPSettings(
-        sender_email=os.getenv("SENDER_EMAIL", ""),
-        sender_name=os.getenv("SENDER_NAME", ""),
-        app_password=os.getenv("GMAIL_APP_PASSWORD", ""),
-        enabled=bool(os.getenv("GMAIL_APP_PASSWORD")),
-    )
-    return AccountSettings(smtp=smtp_from_env)
+    # Fallback to .env values if set (only for default/User 1)
+    if not user_id or user_id == 1:
+        smtp_from_env = SMTPSettings(
+            sender_email=os.getenv("SENDER_EMAIL", ""),
+            sender_name=os.getenv("SENDER_NAME", ""),
+            app_password=os.getenv("GMAIL_APP_PASSWORD", ""),
+            enabled=bool(os.getenv("GMAIL_APP_PASSWORD")),
+        )
+        return AccountSettings(smtp=smtp_from_env)
+
+    # Brand new clean settings for secondary users
+    return AccountSettings()
 
 
-def save_account_settings(settings: AccountSettings) -> None:
-    """Saves account settings locally on candidate's machine."""
-    with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+def save_account_settings(settings: AccountSettings, user_id: Optional[int] = None) -> None:
+    """Saves account settings locally in user's isolated storage vault."""
+    target_file = get_user_settings_path(user_id)
+    target_file.parent.mkdir(parents=True, exist_ok=True)
+    with open(target_file, "w", encoding="utf-8") as f:
         json.dump(settings.model_dump(), f, indent=2)
 
 
-def get_masked_settings() -> Dict[str, Any]:
-    """Returns safe settings payload with passwords masked for frontend UI display."""
-    settings = load_account_settings()
+def get_masked_settings(user_id: Optional[int] = None) -> Dict[str, Any]:
+    """Returns safe settings payload with passwords masked for frontend UI display scoped to user_id."""
+    settings = load_account_settings(user_id=user_id)
     data = settings.model_dump()
 
     # Mask SMTP password

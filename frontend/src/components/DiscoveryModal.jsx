@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { api } from '../api';
+import { api, getCurrentUserId } from '../api';
 import { 
   Sparkles, 
   Search, 
@@ -67,7 +67,9 @@ export default function DiscoveryModal({ isOpen, onClose, profile, onDiscoveryCo
 
     let unsubscribe = null;
     try {
-      unsubscribe = api.subscribeToEvents('discovery', (eventData) => {
+      const currentUid = profile?.user_id || getCurrentUserId();
+      const discoveryTopic = currentUid ? `discovery:${currentUid}` : 'discovery';
+      unsubscribe = api.subscribeToEvents(discoveryTopic, (eventData) => {
         if (eventData?.message) {
           setScanStep(eventData.message);
           setLiveDiscoveryEvents((prev) => [

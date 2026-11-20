@@ -36,24 +36,11 @@ export default function AccountsSettings({ notify }) {
     message: 'Checking persistent session...',
   });
 
-  // Indeed session state (Rock-solid One-Time Chrome Launch)
-  const [launchingIndeedSession, setLaunchingIndeedSession] = useState(false);
-  const [refreshingIndeedSession, setRefreshingIndeedSession] = useState(false);
-  const [indeedSessionInfo, setIndeedSessionInfo] = useState({
-    connected: false,
-    status: 'unconfigured',
-    message: 'Checking persistent session...',
-  });
-
   const loadSessions = async () => {
     try {
       setLoading(true);
-      const [naukriData, indeedData] = await Promise.all([
-        api.getNaukriSessionStatus().catch(() => null),
-        api.getIndeedSessionStatus().catch(() => null),
-      ]);
+      const naukriData = await api.getNaukriSessionStatus().catch(() => null);
       if (naukriData) setNaukriSessionInfo(naukriData);
-      if (indeedData) setIndeedSessionInfo(indeedData);
     } catch (err) {
       if (notify) notify('Failed to load portal session status: ' + err.message, 'error');
     } finally {
@@ -93,62 +80,6 @@ export default function AccountsSettings({ notify }) {
       if (notify) notify(`Profile boost error: ${err.message}`, 'error');
     } finally {
       setIsBoostingProfile(false);
-    }
-  };
-
-  const checkIndeedStatus = async (showToast = false) => {
-    try {
-      setRefreshingIndeedSession(true);
-      const res = await api.getIndeedSessionStatus();
-      setIndeedSessionInfo(res);
-      if (showToast && notify) {
-        if (res.connected) {
-          notify('Indeed session is active and verified!', 'success');
-        } else {
-          notify('No active Indeed persistent session detected yet.', 'warning');
-        }
-      }
-    } catch (err) {
-      if (showToast && notify) notify('Error checking Indeed session: ' + err.message, 'error');
-    } finally {
-      setRefreshingIndeedSession(false);
-    }
-  };
-
-
-  // Laptop Chrome launcher for Indeed
-  const handleLaunchIndeedSession = async () => {
-    try {
-      setLaunchingIndeedSession(true);
-      const res = await api.launchIndeedSession();
-      if (notify) {
-        notify(res.message || 'Launched Chrome window! Log into Indeed and press Enter in the terminal.', 'info');
-      }
-      
-      let attempts = 0;
-      const interval = setInterval(async () => {
-        attempts += 1;
-        try {
-          const statusRes = await api.getIndeedSessionStatus();
-          setIndeedSessionInfo(statusRes);
-          if (statusRes.connected || attempts >= 75) {
-            clearInterval(interval);
-            setLaunchingIndeedSession(false);
-            if (statusRes.connected && notify) {
-              notify('🎉 Indeed session successfully captured and verified!', 'success');
-            }
-          }
-        } catch {
-          if (attempts >= 75) {
-            clearInterval(interval);
-            setLaunchingIndeedSession(false);
-          }
-        }
-      }, 4000);
-
-    } catch (err) {
-      setLaunchingIndeedSession(false);
-      if (notify) notify('Failed to launch Indeed session: ' + err.message, 'error');
     }
   };
 
@@ -266,7 +197,7 @@ export default function AccountsSettings({ notify }) {
           </span>
         </div>
         <p className="portal-page-subtitle">
-          Connect real Naukri, Indeed, and job portal accounts safely via persistent browser session cookies to bypass OTP and anti-bot blocks without storing passwords.
+          Connect your Naukri.com account safely via persistent browser session cookies to bypass OTP and anti-bot blocks without storing passwords.
         </p>
       </div>
 
@@ -274,7 +205,7 @@ export default function AccountsSettings({ notify }) {
       <div className="portal-security-banner">
         <Shield size={20} color="var(--primary-light)" style={{ flexShrink: 0, marginTop: '2px' }} />
         <div>
-          <strong style={{ color: 'var(--text-main)' }}>Zero-Password Persistent Sessions:</strong> Passwords are never permanently stored. Real authenticated browser profiles and cookies are kept strictly in isolated local vaults on your disk (<code>browser_session/</code> and <code>indeed_session/</code>).
+          <strong style={{ color: 'var(--text-main)' }}>Zero-Password Persistent Sessions:</strong> Passwords are never permanently stored. Real authenticated browser profiles and cookies are kept strictly in isolated local vaults on your disk (<code>backend/data/users/&#123;id&#125;/browser_session/</code>).
         </div>
       </div>
 

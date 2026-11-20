@@ -29,7 +29,7 @@ if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
 from app.config import DATA_DIR
-from app.core.user_storage import get_user_browser_session_dir
+from app.core.user_storage import get_user_browser_session_dir, get_user_indeed_session_dir
 from app.agent.browser import (
     DEFAULT_SESSION_DIR,
     sanitize_session_preferences,
@@ -54,6 +54,7 @@ class PendingAuthSession:
     timeout_sec: float = 300.0  # 5 minutes keep-alive for user to enter SMS/email OTP
     user_id: int = 1
     session_dir: Optional[Path] = None
+    lock_held: bool = False
 
 
 class HeadlessAuthManager:
@@ -93,6 +94,13 @@ class HeadlessAuthManager:
                 await session.playwright.stop()
             except Exception as e:
                 logger.debug(f"Notice stopping playwright: {e}")
+            if getattr(session, "lock_held", False):
+                from app.core.user_storage import get_user_browser_lock
+                try:
+                    get_user_browser_lock(session.user_id).release()
+                except Exception:
+                    pass
+                session.lock_held = False
 
     def _close_session(self, session_id: str) -> None:
         """Sync fallback helper for task/signal handlers."""
@@ -108,6 +116,13 @@ class HeadlessAuthManager:
                     loop.run_until_complete(session.playwright.stop())
             except Exception:
                 pass
+            if getattr(session, "lock_held", False):
+                from app.core.user_storage import get_user_browser_lock
+                try:
+                    get_user_browser_lock(session.user_id).release()
+                except Exception:
+                    pass
+                session.lock_held = False
 
     async def start_naukri_login(
         self,
@@ -125,12 +140,26 @@ class HeadlessAuthManager:
         target_session_dir = get_user_browser_session_dir(user_id)
         sanitize_session_preferences(target_session_dir)
 
+        from app.core.user_storage import get_user_browser_lock
+        user_lock = get_user_browser_lock(user_id)
+        acquired = await asyncio.to_thread(user_lock.acquire, True, 10.0)
+        if not acquired:
+            return {
+                "status": "ERROR",
+                "message": f"Browser session for User {user_id} is currently busy with another operation. Please retry in a few moments.",
+                "user_id": user_id,
+            }
+        lock_held = True
+
         p = None
         context = None
         try:
             p = await async_playwright().start()
             launch_args = list(get_stealth_chromium_args())
             launch_args.extend(["--no-first-run", "--no-default-browser-check"])
+
+            from app.config import get_playwright_proxy_config
+            proxy_cfg = get_playwright_proxy_config()
 
             launch_kwargs = {
                 "user_data_dir": str(target_session_dir),
@@ -142,6 +171,8 @@ class HeadlessAuthManager:
                 "timezone_id": "Asia/Kolkata",
                 "ignore_https_errors": True,
             }
+            if proxy_cfg:
+                launch_kwargs["proxy"] = proxy_cfg
 
             for ch in ["chrome", "msedge", None]:
                 try:
@@ -245,6 +276,7 @@ class HeadlessAuthManager:
                             created_at=time.time(),
                             user_id=user_id,
                             session_dir=target_session_dir,
+                            lock_held=True,
                         )
                         return {
                             "status": "OTP_REQUIRED",
@@ -283,6 +315,7 @@ class HeadlessAuthManager:
                         created_at=time.time(),
                         user_id=user_id,
                         session_dir=target_session_dir,
+                        lock_held=True,
                     )
                     return {
                         "status": "OTP_REQUIRED",
@@ -302,6 +335,7 @@ class HeadlessAuthManager:
                 created_at=time.time(),
                 user_id=user_id,
                 session_dir=target_session_dir,
+                lock_held=True,
             )
             return {
                 "status": "OTP_REQUIRED",
@@ -324,6 +358,12 @@ class HeadlessAuthManager:
                 except Exception:
                     pass
             return {"status": "ERROR", "message": f"Headless login error: {str(e)}"}
+        finally:
+            if lock_held and session_id not in self._active_sessions:
+                try:
+                    user_lock.release()
+                except Exception:
+                    pass
 
     async def verify_naukri_otp(
         self,
@@ -455,14 +495,27 @@ class HeadlessAuthManager:
         password: Optional[str] = None,
         use_code_mode: bool = False,
         custom_session_id: Optional[str] = None,
+        user_id: int = 1,
     ) -> Dict[str, Any]:
         """
-        Initiates headless Indeed login natively using Playwright async stealth.
+        Initiates headless Indeed login natively using Playwright async stealth scoped strictly to user_id.
         Supports both email/password (with potential 2FA code) and direct email/SMS login code.
         """
         await self.cleanup_expired_sessions()
         session_id = custom_session_id or str(uuid.uuid4())
-        sanitize_session_preferences(self.indeed_session_dir)
+        target_session_dir = get_user_indeed_session_dir(user_id)
+        sanitize_session_preferences(target_session_dir)
+
+        from app.core.user_storage import get_user_browser_lock
+        user_lock = get_user_browser_lock(user_id)
+        acquired = await asyncio.to_thread(user_lock.acquire, True, 10.0)
+        if not acquired:
+            return {
+                "status": "ERROR",
+                "message": f"Browser session for User {user_id} is currently busy with another operation. Please retry in a few moments.",
+                "user_id": user_id,
+            }
+        lock_held = True
 
         p = None
         context = None
@@ -471,8 +524,11 @@ class HeadlessAuthManager:
             launch_args = list(get_stealth_chromium_args())
             launch_args.extend(["--no-first-run", "--no-default-browser-check"])
 
+            from app.config import get_playwright_proxy_config
+            proxy_cfg = get_playwright_proxy_config()
+
             launch_kwargs = {
-                "user_data_dir": str(self.indeed_session_dir),
+                "user_data_dir": str(target_session_dir),
                 "headless": True,
                 "args": launch_args,
                 "user_agent": DEFAULT_USER_AGENT,
@@ -481,6 +537,8 @@ class HeadlessAuthManager:
                 "timezone_id": "Asia/Kolkata",
                 "ignore_https_errors": True,
             }
+            if proxy_cfg:
+                launch_kwargs["proxy"] = proxy_cfg
 
             for ch in ["chrome", "msedge", None]:
                 try:
@@ -509,13 +567,14 @@ class HeadlessAuthManager:
             cookies = await context.cookies()
             is_logged_in, _ = check_portal_login_sync("Indeed", page.url, cookies) if "/auth" not in page.url else (False, "")
             if is_logged_in:
-                self._save_session_marker(page, cookies, portal="Indeed")
+                self._save_session_marker(page, cookies, portal="Indeed", target_dir=target_session_dir)
                 await context.close()
                 await p.stop()
                 return {
                     "status": "SUCCESS",
                     "message": "Already authenticated into Indeed candidate session.",
                     "portal": "indeed",
+                    "user_id": user_id,
                 }
 
             email_selectors = [
@@ -619,7 +678,7 @@ class HeadlessAuthManager:
                     await p.stop()
                     return {"status": "ERROR", "message": f"Indeed Login Failed: {err_text}"}
 
-            logger.info("Indeed verification code prompt active. Keeping session alive for user code.")
+            logger.info(f"Indeed verification code prompt active for User {user_id}. Keeping session alive for user code.")
             self._active_sessions[session_id] = PendingAuthSession(
                 session_id=session_id,
                 portal="indeed",
@@ -628,12 +687,16 @@ class HeadlessAuthManager:
                 context=context,
                 page=page,
                 created_at=time.time(),
+                user_id=user_id,
+                session_dir=target_session_dir,
+                lock_held=True,
             )
             return {
                 "status": "OTP_REQUIRED",
                 "session_id": session_id,
                 "portal": "indeed",
                 "message": f"Indeed verification code requested. Please enter the 6-digit code sent to {identifier}.",
+                "user_id": user_id,
             }
 
         except Exception as e:
@@ -649,9 +712,20 @@ class HeadlessAuthManager:
                 except Exception:
                     pass
             return {"status": "ERROR", "message": f"Indeed headless login error: {str(e)}"}
+        finally:
+            if lock_held and session_id not in self._active_sessions:
+                try:
+                    user_lock.release()
+                except Exception:
+                    pass
 
-    async def verify_indeed_otp(self, session_id: str, otp: str) -> Dict[str, Any]:
-        """Submits verification code to active headless Indeed browser session."""
+    async def verify_indeed_otp(
+        self,
+        session_id: str,
+        otp: str,
+        expected_user_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Submits verification code to active headless Indeed browser session verifying user ownership."""
         clean_code = otp.strip().replace(" ", "").replace("-", "")
         if not clean_code or len(clean_code) < 4:
             return {"status": "ERROR", "message": "Invalid code format. Please enter a valid verification code."}
@@ -663,10 +737,19 @@ class HeadlessAuthManager:
                 "message": "Login session expired or not found. Please click Connect to request a fresh code.",
             }
 
+        # Multi-Tenant Session Ownership Guard
+        if expected_user_id is not None and session.user_id != expected_user_id:
+            logger.warning(
+                f"🚨 Anti-Hijack: User {expected_user_id} attempted to verify Indeed session {session_id} "
+                f"belonging to User {session.user_id}!"
+            )
+            return {"status": "ERROR", "message": "Access denied: session belongs to another user."}
+
+        target_dir = session.session_dir or get_user_indeed_session_dir(session.user_id)
         page = session.page
         context = session.context
         try:
-            logger.info(f"Entering Indeed verification code for session {session_id}...")
+            logger.info(f"Entering Indeed verification code for User {session.user_id} (session: {session_id})...")
             code_selectors = [
                 "input[data-testid='verification-code-input']",
                 "input[name='verificationCode']",
@@ -720,14 +803,15 @@ class HeadlessAuthManager:
                 cookies = await context.cookies()
                 auth_ok, auth_reason = check_portal_login_sync("Indeed", page.url, cookies)
                 if auth_ok:
-                    self._save_session_marker(page, cookies, portal="Indeed")
-                    logger.info(f"✅ Indeed code verified successfully for {session.identifier}!")
+                    self._save_session_marker(page, cookies, portal="Indeed", target_dir=target_dir)
+                    logger.info(f"✅ Indeed code verified successfully for User {session.user_id} ({session.identifier})!")
                     await self.close_session(session_id)
                     return {
                         "status": "SUCCESS",
                         "message": "Indeed account successfully connected and verified via Mobile Code!",
                         "portal": "indeed",
                         "cookie_count": len(cookies),
+                        "user_id": session.user_id,
                     }
 
                 err_el = await page.query_selector(".error-message, [class*='error'], text='Invalid code', text='Incorrect code', text='Code expired'")
@@ -739,13 +823,14 @@ class HeadlessAuthManager:
             cookies = await context.cookies()
             auth_ok, auth_reason = check_portal_login_sync("Indeed", page.url, cookies)
             if auth_ok:
-                self._save_session_marker(page, cookies, portal="Indeed")
+                self._save_session_marker(page, cookies, portal="Indeed", target_dir=target_dir)
                 await self.close_session(session_id)
                 return {
                     "status": "SUCCESS",
                     "message": "Indeed account successfully connected!",
                     "portal": "indeed",
                     "cookie_count": len(cookies),
+                    "user_id": session.user_id,
                 }
 
             return {

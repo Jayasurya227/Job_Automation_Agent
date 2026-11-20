@@ -121,6 +121,9 @@ class BrowserSessionManager:
 
         async with async_playwright() as playwright:
             context = None
+            from app.config import get_playwright_proxy_config
+            proxy_cfg = get_playwright_proxy_config()
+
             # Prioritize genuine Google Chrome / Edge to bypass Akamai EdgeSuite bot detection
             for ch in ["chrome", "msedge", None]:
                 try:
@@ -134,6 +137,8 @@ class BrowserSessionManager:
                         "timezone_id": "Asia/Kolkata",
                         "ignore_https_errors": True,
                     }
+                    if proxy_cfg:
+                        launch_kwargs["proxy"] = proxy_cfg
                     if ch:
                         launch_kwargs["channel"] = ch
                     context = await playwright.chromium.launch_persistent_context(**launch_kwargs)
@@ -143,16 +148,19 @@ class BrowserSessionManager:
                     context = None
 
             if context is None:
-                context = await playwright.chromium.launch_persistent_context(
-                    user_data_dir=str(self.session_dir),
-                    headless=is_headless,
-                    viewport=None if not is_headless else cast(Any, self.viewport),
-                    user_agent=self.user_agent,
-                    args=self.get_launch_args(headless=is_headless),
-                    locale="en-US",
-                    timezone_id="Asia/Kolkata",
-                    ignore_https_errors=True,
-                )
+                fallback_kwargs = {
+                    "user_data_dir": str(self.session_dir),
+                    "headless": is_headless,
+                    "viewport": None if not is_headless else cast(Any, self.viewport),
+                    "user_agent": self.user_agent,
+                    "args": self.get_launch_args(headless=is_headless),
+                    "locale": "en-US",
+                    "timezone_id": "Asia/Kolkata",
+                    "ignore_https_errors": True,
+                }
+                if proxy_cfg:
+                    fallback_kwargs["proxy"] = proxy_cfg
+                context = await playwright.chromium.launch_persistent_context(**fallback_kwargs)
 
             # Inject anti-detection stealth script into all existing & future pages
             await context.add_init_script(build_stealth_js())

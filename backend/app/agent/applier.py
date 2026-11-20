@@ -1276,7 +1276,28 @@ class EasyApplyFiller:
         fills candidate data, checks for bot challenges, takes review snapshot,
         and either pauses for Assisted Review Gateway or executes submission.
         Inherits authenticated browser session from backend/data/browser_session/.
+        Protected by process-wide per-user browser mutex lock.
         """
+        from app.core.user_storage import user_browser_lock
+        with user_browser_lock(self.user_id):
+            return self._fill_and_stage_application_impl(
+                target_url_or_path=target_url_or_path,
+                resume_path=resume_path,
+                job_title=job_title,
+                company_name=company_name,
+                thread_id=thread_id,
+                auto_submit=auto_submit,
+            )
+
+    def _fill_and_stage_application_impl(
+        self,
+        target_url_or_path: str,
+        resume_path: Optional[str] = None,
+        job_title: str = "Target Job",
+        company_name: str = "Hiring Company",
+        thread_id: Optional[str] = None,
+        auto_submit: bool = False,
+    ) -> FormFillResult:
         tid = thread_id or f"app_{int(time.time() * 1000)}"
         snapshot_file = self.snapshot_dir / f"review_{tid}.png"
         confirmed_snapshot_file = self.snapshot_dir / f"confirmed_{tid}.png"
@@ -1306,7 +1327,8 @@ class EasyApplyFiller:
 
         session_dir = self.browser_session_dir
         if "indeed.com" in target_url_or_path.lower():
-            session_dir = DATA_DIR / "indeed_session"
+            from app.core.user_storage import get_user_indeed_session_dir
+            session_dir = get_user_indeed_session_dir(self.user_id)
         session_dir.mkdir(parents=True, exist_ok=True)
         sanitize_session_preferences(session_dir)
 
@@ -1449,11 +1471,12 @@ class EasyApplyFiller:
                 # Assisted Mode: Capture review snapshot and pause at review gateway
                 try:
                     page.screenshot(path=str(snapshot_file), full_page=False)
-                    try:
-                        import shutil
-                        shutil.copy2(snapshot_file, SNAPSHOT_DIR / snapshot_file.name)
-                    except Exception:
-                        pass
+                    if self.user_id == 1:
+                        try:
+                            import shutil
+                            shutil.copy2(snapshot_file, SNAPSHOT_DIR / snapshot_file.name)
+                        except Exception:
+                            pass
                 except Exception:
                     pass
                 context.close()

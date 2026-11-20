@@ -21,23 +21,25 @@ _DATA_DIR.mkdir(parents=True, exist_ok=True)
 # Default to local SQLite database (absolute path), or cloud PostgreSQL if configured.
 DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{_DATA_DIR / 'jobs.db'}")
 
-connect_args = {}
+engine_kwargs = {"echo": False}
 if DATABASE_URL.startswith("sqlite"):
-    connect_args["check_same_thread"] = False
-    # Ensure data directory exists
-    Path("data").mkdir(parents=True, exist_ok=True)
+    engine_kwargs["connect_args"] = {"check_same_thread": False}
+elif DATABASE_URL.startswith(("postgresql", "postgres")):
+    # Enterprise PostgreSQL Connection Pooling & Health Pre-ping (Bug 28)
+    engine_kwargs["pool_pre_ping"] = True
+    engine_kwargs["pool_size"] = int(os.getenv("DB_POOL_SIZE", "10"))
+    engine_kwargs["max_overflow"] = int(os.getenv("DB_MAX_OVERFLOW", "20"))
 
-engine = create_engine(
-    DATABASE_URL,
-    connect_args=connect_args,
-    echo=False
-)
+engine = create_engine(DATABASE_URL, **engine_kwargs)
 
-# Enable foreign key constraints in SQLite (disabled by default in SQLite)
+# Enable WAL Mode, Busy Timeout, Synchronous Normal, and Foreign Keys in SQLite (Bug 27)
 if DATABASE_URL.startswith("sqlite"):
     @event.listens_for(engine, "connect")
     def set_sqlite_pragma(dbapi_connection, connection_record):
         cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout=5000")
+        cursor.execute("PRAGMA synchronous=NORMAL")
         cursor.execute("PRAGMA foreign_keys=ON")
         cursor.close()
 

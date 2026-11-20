@@ -27,9 +27,19 @@ from app.db.crud import (
 )
 from app.utils.event_bus import emit_event
 
+from collections import defaultdict
+
 logger = logging.getLogger("agent.ingestion")
 
-_discovery_lock = asyncio.Lock()
+_user_discovery_locks: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
+_default_discovery_lock = asyncio.Lock()
+
+
+def get_discovery_lock(user_id: Optional[int] = None) -> asyncio.Lock:
+    """Returns an isolated asyncio concurrency lock per user."""
+    if user_id is not None:
+        return _user_discovery_locks[user_id]
+    return _default_discovery_lock
 
 DEFAULT_PROFILE_PATH = Path(__file__).resolve().parent.parent.parent / "profile.json"
 
@@ -132,6 +142,7 @@ async def ingest_single_job(
             company=discovered.company,
             portal=discovered.portal,
             job_url=discovered.job_url,
+            user_id=user_id,
         )
 
         score = match_result.match_score
@@ -207,8 +218,9 @@ async def ingest_single_job(
             status_note = f"1-Click Apply Ready: Solid ATS match {score}% (70-{AUTO_APPLY_MATCH_THRESHOLD-1}%). Stored in Reserve Pool (Archived)."
             logger.info(f"📁 SOLID MATCH ({score}% in 70-{AUTO_APPLY_MATCH_THRESHOLD-1}%). Stored in Reserve Pool (Archived)...")
 
-        master_pdf = Path(__file__).resolve().parent.parent.parent / "data" / "uploaded_resume.pdf"
-        pdf_path = str(master_pdf) if master_pdf.exists() else ""
+        from app.core.user_storage import get_user_resume
+        user_resume = get_user_resume(user_id) if user_id else None
+        pdf_path = str(user_resume) if (user_resume and user_resume.exists()) else ""
         tex_path = ""
 
         create_or_update_application(
@@ -250,6 +262,10 @@ async def ingest_single_job(
         )
 
     except Exception as e:
+        try:
+            db.rollback()
+        except Exception:
+            pass
         logger.error(f"Error ingesting job '{discovered.title}' at '{discovered.company}': {e}", exc_info=True)
         return None
     finally:
@@ -492,8 +508,9 @@ async def discover_and_ingest(
     Discovers fresh listings across portals, deduplicates, evaluates with Claude Haiku,
     and populates SQLite jobs.db. Thread-safe with concurrency lock.
     """
-    if _discovery_lock.locked():
-        logger.warning("Discovery cycle already active in another thread/task. Skipping overlapping trigger.")
+    user_lock = get_discovery_lock(user_id)
+    if user_lock.locked():
+        logger.warning(f"Discovery cycle already active for user {user_id}. Skipping overlapping trigger.")
         return IngestionReport(
             total_discovered=0,
             duplicates_skipped=0,
@@ -504,7 +521,7 @@ async def discover_and_ingest(
             jobs=[]
         )
 
-    async with _discovery_lock:
+    async with user_lock:
         prefs = load_candidate_preferences(user_id=user_id)
         saved_exp = prefs.get("experience_level", "0-1")
         eff_exp = experience_level if experience_level is not None else saved_exp
@@ -582,21 +599,26 @@ async def discover_and_ingest(
             user_id=user_id,
         )
 
-        # Autonomously trigger 1-Click apply on elite matches (>= 80%, respecting daily max 7)
-        try:
-            apply_res = await process_1click_applications(min_score=AUTO_APPLY_MATCH_THRESHOLD)
-            report.auto_applied_count = apply_res.get("applied_count", 0)
-        except Exception as app_err:
-            logger.error(f"Error executing autonomous 1-click apply: {app_err}")
+        # Autonomously trigger 1-Click apply on elite matches (>= 80%, respecting daily max 7) scoped to user_id
+        if user_id is not None:
+            try:
+                apply_res = await process_1click_applications(user_id=user_id, min_score=AUTO_APPLY_MATCH_THRESHOLD)
+                report.auto_applied_count = apply_res.get("applied_count", 0)
+            except Exception as app_err:
+                logger.error(f"Error executing autonomous 1-click apply for user {user_id}: {app_err}")
 
-        emit_event("discovery", "discovery_progress", {
+        completed_payload = {
             "stage": "completed",
             "total_discovered": report.total_discovered,
             "high_matches_ready": report.high_matches_ready,
             "low_matches_archived": report.low_matches_archived,
             "duplicates_skipped": report.duplicates_skipped,
             "auto_applied_count": report.auto_applied_count,
-            "message": f"Discovery complete! {report.auto_applied_count} auto-applied via 1-Click. Remaining high matches queued in Review for tomorrow."
-        })
+            "message": f"Discovery complete! {report.auto_applied_count} auto-applied via 1-Click. Remaining high matches queued in Review for tomorrow.",
+            "user_id": user_id,
+        }
+        emit_event("discovery", "discovery_progress", completed_payload)
+        if user_id is not None:
+            emit_event(f"discovery:{user_id}", "discovery_progress", completed_payload)
 
         return report
